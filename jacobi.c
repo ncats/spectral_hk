@@ -10,7 +10,7 @@
 #endif
 
 #ifndef MAX_ITER
-# define MAX_ITER 200
+# define MAX_ITER 500
 #endif
 
 /**
@@ -150,7 +150,7 @@ int jacobi (float **a, int n, float d[], float **v)
   err = 1; /* didn't converge; too many iterations */
 
  done:
-  if (err == 0)
+  if (err >= 0)
     eigen_sorter (d, v, n);
 
   if (b != 0)

@@ -15,7 +15,7 @@ main (int argc, char *argv[])
   /* decode inchi graph */
   FILE *infp, *outfp;
   spectral_t *spectral = spectral_create ();
-  char buffer[BUFSIZ];
+  char buffer[1<<15];
   const char *hk;
 
   if (argc > 1)

@@ -21,12 +21,23 @@
 
 #define MATRIX_LAPLACIAN
 
+#ifndef EPS
+# define EPS 1e-20
+#endif
+
+/*
+ * maximum graph size; for large graphs a more specialized eigensolver
+ * (e.g., iterative ones) are more appropriate.
+ */
+#ifndef SPECTRAL_MAXG
+# define SPECTRAL_MAXG 200
+#endif
+
 /*
  * predefined precision; careful changing this value will affect
  * the hashkey!
  */
-#define PRECISION 4
-#define ROUND_OFF  0.5
+#define PRECISION 0.0001
 
 
 #define __set_edge(i,j) G[(i)*size+(j)] = G[(j)*size+(i)] = 1
@@ -52,16 +63,17 @@ encode_rational32 (unsigned char data[4], float x)
     unsigned int ival;
     float fval;
   } u;
-  double p = pow (10., PRECISION);
-  u.fval = (int)(x*p+ROUND_OFF)/p;
+
+  u.fval = floorf ((x + PRECISION)/PRECISION) * PRECISION; /* rounding */
+  u.ival&= 0xffff0000;
 
 #ifdef SPECTRAL_DEBUG
   { int e, m;
     //u.fval = x;
     e = (u.ival >> 23) & 0xff;
     m = (e == 0) ? (u.ival & 0x7fffff)<<1 : (u.ival&0x7fffff) | 0x800000;
-    printf ("%.10f: %d e=%d m=%d %d %10lf\n", 
-            x, u.ival, e, m, m & 0xffff00, m*pow(2., e-150));
+    printf ("%.10f: %d %d %.10f %f e=%d m=%d %.10f\n", 
+            x, u.ival, u.ival & 0xffff0000, u.fval, rintf (x), e, m, m*powf(2., e-150));
   }
 #endif
 
@@ -224,7 +236,7 @@ spectral_inchi (spectral_t *sp, const char *inchi)
     }
 
   ptr = start + 2; /* skip over /c */
-  for (end = ptr; *end != '/' && *end != '\0'; ++end)
+  for (end = ptr; *end != '/' && !isspace (*end) && *end != '\0'; ++end)
     ;
 
   size = end - start;
@@ -289,17 +301,26 @@ spectral_inchi (spectral_t *sp, const char *inchi)
       vv = v;
     }
 
-  if (sp->bufsiz < nv)
+  if (nv > SPECTRAL_MAXG)
     {
-      sp->spectrum = realloc (sp->spectrum, nv*sizeof (float));
-      sp->bufsiz = nv;
-    }
-
-  if (graph_spectrum (sp->spectrum, G, nv, size) < 0)
-    {
-      sprintf (sp->errmsg, 
-               "Eigensolver didn't converge within give iterations");
+      sprintf (sp->errmsg, "Graph is too large (%d > %d) for eigensolver",
+               nv, SPECTRAL_MAXG);
       nv = -1;
+    }
+  else
+    {
+      if (sp->bufsiz < nv)
+        {
+          sp->spectrum = realloc (sp->spectrum, nv*sizeof (float));
+          sp->bufsiz = nv;
+        }
+
+      if (graph_spectrum (sp->spectrum, G, nv, size) < 0)
+        {
+          sprintf (sp->errmsg, "Eigensolver didn't converge within "
+                   "specified number of iterations");
+          nv = -1;
+        }
     }
 
   free (ppv);
@@ -340,13 +361,13 @@ spectral_free (spectral_t *sp)
 }
 
 const char *
-spectral_hashkey (spectral_t *sp)
+spectral_hashkey (const spectral_t *sp)
 {
   return sp->hashkey;
 }
 
 const char *
-spectral_error (spectral_t *sp)
+spectral_error (const spectral_t *sp)
 {
   return sp->errmsg;
 }
@@ -367,10 +388,11 @@ spectral_digest (spectral_t *sp, const char *inchi)
       /*
        * first block is topology
        */
+      i = 0;
 #if defined(MATRIX_LAPLACIAN)
-      i = 1; /* should also be 0 or very close to it */
-#else
-      i = 0; 
+      /* skip over all disconnected components */
+      while (sp->spectrum[++i] < EPS)
+        ;
 #endif
       for (; i < size; ++i)
         {
