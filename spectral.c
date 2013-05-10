@@ -6,8 +6,9 @@
 #include <math.h>
 
 #include "sha1.h"
-#include "spectral.h"
 #include "b32.h"
+#include "interval.h"
+#include "spectral.h"
 
 /**
  * unfortunately due to numerical round offs, we can't
@@ -18,8 +19,6 @@
 #else
 # include "jacobi.h"
 #endif
-
-#define MATRIX_LAPLACIAN
 
 #ifndef EPS
 # define EPS 1e-20
@@ -37,8 +36,7 @@
  * predefined precision; careful changing this value will affect
  * the hashkey!
  */
-#define PRECISION 0.0001
-
+#define ROUND_OFF 0.0005
 
 #define __set_edge(i,j) G[(i)*size+(j)] = G[(j)*size+(i)] = 1
 #define __get_edge(i,j) G[(i)*size+(j)]
@@ -46,98 +44,168 @@
 /**
  * internal state of spectral_t
  */
-struct __spectral_t 
+struct __spectral_s 
 {
   size_t bufsiz; /* buffer size of spectrum */
   float *spectrum; /* spectrum buffer */
-  sha1_state *sha1;
-  unsigned char digest[20]; /* sha1 digest buffer */
+  sha1_t *sha1; /* sha1 hash */
+  interval_t *itree; /* interval tree for quantization */
+  unsigned char digest[20]; /* digest buffer */
   char hashkey[25]; /* 7(topology) + 8(connection) + 9(full) */
   char errmsg[BUFSIZ];
 };
 
+
 static void
-encode_rational32 (unsigned char data[4], float x)
+digest_spectrum (spectral_t *sp, int size)
 {
-  union {
-    unsigned int ival;
-    float fval;
-  } u;
+  unsigned int uv;
+  unsigned char data[4];
+  int i = 0;
 
-  u.fval = floorf ((x + PRECISION)/PRECISION) * PRECISION; /* rounding */
-  u.ival&= 0xffff0000;
-
+  /* skip over all disconnected components */
+  while (sp->spectrum[++i] < EPS && i < size)
+    ;
+  for (; i < size; ++i)
+    {
+      uv = interval_encode32 (sp->itree, sp->spectrum[i], ROUND_OFF);
 #ifdef SPECTRAL_DEBUG
-  { int e, m;
-    //u.fval = x;
-    e = (u.ival >> 23) & 0xff;
-    m = (e == 0) ? (u.ival & 0x7fffff)<<1 : (u.ival&0x7fffff) | 0x800000;
-    printf ("%.10f: %d %d %.10f %f e=%d m=%d %.10f\n", 
-            x, u.ival, u.ival & 0xffff0000, u.fval, rintf (x), e, m, m*powf(2., e-150));
-  }
+      printf ("%3d: %.10f %u\n", i, sp->spectrum[i], uv);
 #endif
-
-  data[0] = u.ival >> 24;
-  data[1] = (u.ival & 0x00ffffff) >> 16;
-  data[2] = (u.ival & 0x0000ffff) >> 8;
-  data[3] = u.ival & 0xff;
+      data[0] = uv >> 24;
+      data[1] = (uv & 0x00ffffff) >> 16;
+      data[2] = (uv & 0x0000ffff) >> 8;
+      data[3] = uv & 0xff;
+      sha1_update (sp->sha1, data, sizeof (data));
+    }
 }
 
-#ifdef HAVE_GSL
-static int
-graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
+void
+spectral_adjacency_graph (float **M, const int *G, int nv, size_t size)
 {
   int i, j, v;
-  gsl_eigen_symmv_workspace *ws = gsl_eigen_symmv_alloc (nv);
-  gsl_matrix *A = gsl_matrix_alloc (nv, nv);
-  gsl_matrix *V = gsl_matrix_alloc (nv, nv);
-  gsl_vector *L = gsl_vector_alloc (nv);
-
-#if defined(MATRIX_LAPLACIAN) || defined(MATRIX_SIGNLESS)
-  /* 
-   * laplacian matrix
-   */
-  for (i = 0; i < nv; ++i)
-    {
-      int d = 0;
-      for (j = 0; j < nv; ++j)
-        {
-          if (i != j)
-            {
-              v = __get_edge (i+1, j+1);
-              d += v;
-              gsl_matrix_set (A, i, j, v ?
-#if defined(MATRIX_SIGNLESS)
-                              1.
-#else
-                              -1.
-#endif
-                              :0.);
-            }
-        }
-      gsl_matrix_set (A, i, i, d);
-    }
-#else
   /*
-   * adjajency 
+   * adjacency 
    */
   for (i = 0; i < nv; ++i)
     {
       for (j = i+1; j < nv; ++j)
         {
           v = __get_edge (i+1, j+1);
-          gsl_matrix_set (A, i, j, v);
-          gsl_matrix_set (A, j, i, v);
+          M[i][j] = v;
         }
-      gsl_matrix_set (A, i, i, 0.);
+
+      for (j = 0; j < i; ++j)
+        M[i][j] = M[j][i];
+
+      M[i][i] = 0.;
     }
-#endif
+}
+
+void
+spectral_laplacian_graph (float **M, const int *G, int nv, size_t size)
+{
+  int i, j, v, d;
+  /* 
+   * laplacian matrix
+   */
+  for (i = 0; i < nv; ++i)
+    {
+      d = 0;
+      for (j = 0; j < nv; ++j)
+        if (i != j)
+          {
+            v = __get_edge (i+1, j+1);
+            d += v;
+            M[i][j] = v ? -1 : 0.;
+          }
+      M[i][i] = d;
+    }
+}
+
+void 
+spectral_signless_graph (float **M, const int *G, int nv, size_t size)
+{
+  int i, j, v, d;
+  /* 
+   * signless laplacian matrix
+   */
+  for (i = 0; i < nv; ++i)
+    {
+      d = 0;
+      for (j = 0; j < nv; ++j)
+        if (i != j)
+          {
+            v = __get_edge (i+1, j+1);
+            d += v;
+            M[i][j] = v ? 1 : 0.;
+          }
+      M[i][i] = d;
+    }
+}
+
+void
+spectral_normalized_graph (float **M, const int *G, int nv, size_t size)
+{
+  int i, j, v, *d;
+
+  /* 
+   * normalized laplacian matrix
+   */
+  d = malloc (nv *sizeof (int));
+  for (i = 0; i < nv; ++i)
+    {
+      d[i] = 0;
+      for (j = 0; j < nv; ++j)
+        if (i != j)
+          {
+            v = __get_edge (i+1, j+1);
+            d[i] += v;
+          }
+      M[i][i] = 1;
+      for (j = 0; j < i; ++j)
+        M[i][j] = M[j][i] = -1./sqrt (d[i]*d[j]);
+    }
+  free (d);
+}
+
+#ifdef HAVE_GSL
+static int
+graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
+{
+  int i, j;
+  float **a;
+  gsl_eigen_symmv_workspace *ws = gsl_eigen_symmv_alloc (nv);
+  gsl_matrix *A = gsl_matrix_alloc (nv, nv);
+  gsl_matrix *V = gsl_matrix_alloc (nv, nv);
+  gsl_vector *L = gsl_vector_alloc (nv);
+
+  a = malloc (sizeof (float *)*nv);
+  for (i = 0; i < nv; ++i)
+    a[i] = malloc (nv*sizeof (float));
   
-  v = gsl_eigen_symmv (A, L, V, ws);
+  spectral_normalized_graph (a, G, nv, size);
+
+  /* copy over the matrix */
+  for (i = 0; i < nv; ++i)
+    {
+      for (j = i+1; j < nv; ++j)
+        {
+          gsl_matrix_set (A, i, j, a[i][j]);
+          gsl_matrix_set (A, j, i, a[j][i]);
+        }
+      gsl_matrix_set (A, i, i, a[i][i]);
+    }
+  
+  gsl_eigen_symmv (A, L, V, ws);
   gsl_eigen_symmv_sort (L, V, GSL_EIGEN_SORT_VAL_ASC);
   
   for (i = 0; i < nv; ++i)
-    spectrum[i] = gsl_vector_get (L, i);
+    {
+      spectrum[i] = gsl_vector_get (L, i);
+      free (a[i]);
+    }
+  free (a);
     
   gsl_vector_free (L);
   gsl_matrix_free (V);
@@ -149,59 +217,25 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 
 #else
 
+#warning **** Please consider using the GSL eigensolver. It's an order \
+of magnitude faster! The bundled implementation is only for completeness \
+sake. ****
+
 static int
 graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 {
   float **evec, **a;
-  int v, i, j, err = 0;
+  int i, err = 0;
 
   a = malloc (sizeof (float *)*nv);
   evec = malloc (sizeof (float *)*nv);
-
-#if defined(MATRIX_LAPLACIAN) || defined(MATRIX_SIGNLESS)
-  /* 
-   * laplacian matrix
-   */
-  for (i = 0; i < nv; ++i)
-    {
-      int d = 0;
-      a[i] = malloc (nv*sizeof (float));
-      for (j = 0; j < nv; ++j)
-        if (i != j)
-          {
-            v = __get_edge (i+1, j+1);
-            d += v;
-#if defined(MATRIX_SIGNLESS)
-            a[i][j] = v ? 1 : 0.;
-#else
-            a[i][j] = v ? -1 : 0.;
-#endif
-          }
-      a[i][i] = d;
-      evec[i] = malloc (nv*sizeof (float));
-    }
-
-#else 
-  /*
-   * adjajency 
-   */
   for (i = 0; i < nv; ++i)
     {
       a[i] = malloc (nv*sizeof (float));
-      for (j = i+1; j < nv; ++j)
-        {
-          v = __get_edge (i+1, j+1);
-          a[i][j] = v;
-        }
-
-      for (j = 0; j < i; ++j)
-        a[i][j] = a[j][i];
-
-      a[i][i] = 0.;
       evec[i] = malloc (nv*sizeof (float));
     }
-#endif
 
+  spectral_normalized_graph (a, G, nv, size);
   err = jacobi (a, nv, spectrum, evec);
 
   for (i = 0; i < nv; ++i)
@@ -214,7 +248,7 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 
   return err;
 }
-#endif
+#endif /* !HAVE_GSL */
 
 static int
 spectral_inchi (spectral_t *sp, const char *inchi)
@@ -239,7 +273,7 @@ spectral_inchi (spectral_t *sp, const char *inchi)
   for (end = ptr; *end != '/' && !isspace (*end) && *end != '\0'; ++end)
     ;
 
-  size = end - start;
+  size = end - start;   /* this is an over estimate of the graph size */
   G = malloc (size * size * sizeof (int));
   { int i = 0, j;
     for (; i < size; ++i)
@@ -285,11 +319,13 @@ spectral_inchi (spectral_t *sp, const char *inchi)
 
         case '/':
         case '\0':
+        case ';': /* component */
           /* end */
           break;
 
-        case ';': /* component */
         case '*': /* multiplicity */
+          nv = v; /* reset */
+          vv = 0;
           break;
 
         default:
@@ -336,7 +372,7 @@ spectral_inchi (spectral_t *sp, const char *inchi)
 spectral_t *
 spectral_create ()
 {
-  spectral_t *sp = malloc (sizeof (struct __spectral_t));
+  spectral_t *sp = malloc (sizeof (struct __spectral_s));
   if (sp != 0)
     {
       sp->bufsiz = 0;
@@ -344,6 +380,8 @@ spectral_create ()
       memset (sp->hashkey, 0, sizeof (sp->hashkey));
       memset (sp->errmsg, 0, sizeof (sp->errmsg));
       sp->sha1 = sha1_create ();
+      /* eigenvalues of a normalized laplacian is bounded by [0,2] */
+      sp->itree = interval_create (0., 2., 32);
     }
   return sp;
 }
@@ -356,6 +394,7 @@ spectral_free (spectral_t *sp)
       if (sp->spectrum != 0)
         free (sp->spectrum);
       sha1_free (sp->sha1);
+      interval_free (sp->itree);
       free (sp);
     }
 }
@@ -376,8 +415,7 @@ const char *
 spectral_digest (spectral_t *sp, const char *inchi)
 {
   char *start, *end;
-  unsigned char data[4];
-  int i, size;
+  int size;
 
   size = spectral_inchi (sp, inchi);
   if (size < 0)
@@ -385,20 +423,11 @@ spectral_digest (spectral_t *sp, const char *inchi)
   else
     {
       sha1_reset (sp->sha1);
+
       /*
        * first block is topology
        */
-      i = 0;
-#if defined(MATRIX_LAPLACIAN)
-      /* skip over all disconnected components */
-      while (sp->spectrum[++i] < EPS)
-        ;
-#endif
-      for (; i < size; ++i)
-        {
-          encode_rational32 (data, sp->spectrum[i]);
-          sha1_update (sp->sha1, data, sizeof (data));
-        }
+      digest_spectrum (sp, size);
       sha1_digest (sp->sha1, sp->digest);
       start = sp->hashkey;
       b32_encode35 (&start, sp->digest, 5); /* 7 char */
@@ -416,7 +445,6 @@ spectral_digest (spectral_t *sp, const char *inchi)
           sha1_update (sp->sha1, (unsigned char *)start, end - start);
         }
       sha1_digest (sp->sha1, sp->digest);
-
       start = sp->hashkey + 7;
       b32_encode40 (&start, sp->digest, 5); /* 8 char's */
 
@@ -427,7 +455,6 @@ spectral_digest (spectral_t *sp, const char *inchi)
       sha1_update (sp->sha1, sp->digest, 20);
       sha1_update (sp->sha1, (const unsigned char *)inchi, strlen (inchi));
       sha1_digest (sp->sha1, sp->digest);
-
       start = sp->hashkey + 15;
       b32_encode45 (&start, sp->digest, 6);
     }

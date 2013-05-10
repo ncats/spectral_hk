@@ -6,7 +6,8 @@
 
 #include "sha1.h"
 
-struct _sha1_state {
+struct __sha1_s 
+{
   size_t size; /* bytes processed */
   size_t count; /* overflow blocks */
   uint32_t H[5]; /* hash state */
@@ -55,24 +56,24 @@ static const unsigned char sha1pad[64] =
 };
 
 
-sha1_state *
+sha1_t *
 sha1_create ()
 {
-  sha1_state *state = malloc (sizeof (struct _sha1_state));
+  sha1_t *state = malloc (sizeof (struct __sha1_s));
   if (state != 0)
     sha1_reset (state);
   return state;
 }
 
 void
-sha1_free (sha1_state *state)
+sha1_free (sha1_t *state)
 {
   if (state != 0)
     free (state);
 }
 
 void
-sha1_reset (sha1_state *state)
+sha1_reset (sha1_t *state)
 {
   if (state != 0)
     {
@@ -87,7 +88,7 @@ sha1_reset (sha1_state *state)
 }
 
 static void
-process_block (sha1_state *state, const unsigned char M[64])
+process_block (sha1_t *state, const unsigned char M[64])
 {
   int t, i;
   uint32_t T, a, b, c, d, e;
@@ -161,7 +162,7 @@ process_block (sha1_state *state, const unsigned char M[64])
 }
 
 void
-sha1_update (sha1_state *state, const unsigned char *input, size_t len)
+sha1_update (sha1_t *state, const unsigned char *input, size_t len)
 {
   size_t leftover, fill;
 
@@ -196,7 +197,7 @@ sha1_update (sha1_state *state, const unsigned char *input, size_t len)
 }
 
 void
-sha1_digest (sha1_state *state, unsigned char digest[20])
+sha1_digest (sha1_t *state, unsigned char digest[20])
 {
     uint32_t last, padn;
     uint32_t high, low;

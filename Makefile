@@ -1,9 +1,9 @@
 
 CC = gcc
-CFLAGS= -Wall -g
+CFLAGS= -Wall -O3
 
 TARGETS = libspectral.a spectral_hk
-OBJS = b32.o sha1.o jacobi.o spectral.o
+OBJS = b32.o sha1.o jacobi.o spectral.o interval.o
 
 LIBS = -lm
 

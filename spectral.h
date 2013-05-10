@@ -9,7 +9,7 @@ extern "C" {
 /*
  * opaque spectral internal state
  */
-typedef struct __spectral_t spectral_t;
+typedef struct __spectral_s spectral_t;
 
 extern spectral_t *spectral_create ();
 extern const char * spectral_digest (spectral_t *, const char *inchi);
