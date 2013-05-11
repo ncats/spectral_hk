@@ -1,11 +1,23 @@
+##
 
 CC = gcc
-CFLAGS= -Wall -O3
+# uncomment to compile debug
+#DEBUG=-DSPECTRAL_DEBUG
 
+# uncomment to compile with gsl
+GSLFLAGS=-DHAVE_GSL -I/opt/local/include
+
+# uncomment to compile with gsl library; for macports, use -lcblas instead
+GSLLIBS=-L/opt/local/lib -lgsl -lcblas ## macports
+#GSLLIBS=-lgsl -lgslcblas ## linux
+
+######################################################################
+## shouldn't have to edit below
+######################################################################
 TARGETS = libspectral.a spectral_hk
 OBJS = b32.o sha1.o jacobi.o spectral.o interval.o
-
-LIBS = -lm
+CFLAGS= -Wall -O3 $(GSLFLAGS) $(DEBUG)
+LIBS = -lm $(GSLLIBS)
 
 .c.o: $(OBJS)
 	$(CC) $(CFLAGS) -c $<

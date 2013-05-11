@@ -217,9 +217,9 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 
 #else
 
-#warning **** Please consider using the GSL eigensolver. It's an order \
+#warning "**** Please consider using the GSL eigensolver. It's an order \
 of magnitude faster! The bundled implementation is only for completeness \
-sake. ****
+sake. ****"
 
 static int
 graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
@@ -251,30 +251,21 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 #endif /* !HAVE_GSL */
 
 static int
-spectral_inchi (spectral_t *sp, const char *inchi)
+parse_inchi_graph (int **pG, size_t *psize, char *inchi, char errmsg[])
 {
-  char *ptr, *start = strstr (inchi, "/c"), *end;
-  int nv = 0, vv = 0, *G, *pv, *ppv;
   char pc;
-  size_t size;
+  int *G, *ppv, *pv, nv = 0, vv = 0;
+  size_t size = strlen (inchi);
+  char *ptr = inchi;
+  char *end = inchi + size;
 
-  if (strncmp ("InChI=", inchi, 6) != 0)
+  if (size > *psize)
     {
-      sprintf (sp->errmsg, "Inchi string doesn't begins with InChI=");
-      return -1;
-    }
-  else if (start == 0)
-    {
-      sprintf (sp->errmsg, "InChI string doesn't have connection layer");
-      return 0;
+      *pG = realloc (*pG, size*size*sizeof (int));
+      *psize = size;
     }
 
-  ptr = start + 2; /* skip over /c */
-  for (end = ptr; *end != '/' && !isspace (*end) && *end != '\0'; ++end)
-    ;
-
-  size = end - start;   /* this is an over estimate of the graph size */
-  G = malloc (size * size * sizeof (int));
+  G = *pG;
   { int i = 0, j;
     for (; i < size; ++i)
       for (j = 0; j < size; ++j)
@@ -305,7 +296,7 @@ spectral_inchi (spectral_t *sp, const char *inchi)
               __set_edge (*pv, v);
             }
           else
-            sprintf (sp->errmsg, "Mismatch ()'s in connection layer");
+            sprintf (errmsg, "Mismatch ()'s in connection layer");
           break;
 
         case ',':
@@ -314,13 +305,15 @@ spectral_inchi (spectral_t *sp, const char *inchi)
               __set_edge (pv[-1], v);
             }
           else
-            sprintf (sp->errmsg, "Character ',' not within () block");
+            sprintf (errmsg, "Character ',' not within () block");
           break;
 
         case '/':
-        case '\0':
+        case '\0': /* end */
+          break;
+
         case ';': /* component */
-          /* end */
+          
           break;
 
         case '*': /* multiplicity */
@@ -329,13 +322,67 @@ spectral_inchi (spectral_t *sp, const char *inchi)
           break;
 
         default:
-          sprintf (sp->errmsg, 
-                   "Unknown character '%c' in connection layer", pc);
+          sprintf (errmsg, "Unknown character '%c' in connection layer", pc);
+          free (ppv);
           return -1;
         }
       pc = *ptr;
       vv = v;
     }
+  free (ppv);
+
+  return nv;
+}
+
+static int
+spectral_inchi (spectral_t *sp, const char *inchi)
+{
+  char *ptr, *start = strstr (inchi, "/c"), *end;
+  int nv = 0, *G = 0, *pG = 0;
+  size_t size = 0, psize = 0;
+
+  if (strncmp ("InChI=", inchi, 6) != 0)
+    {
+      sprintf (sp->errmsg, "Inchi string doesn't begins with InChI=");
+      return -1;
+    }
+  else if (start == 0)
+    {
+      sprintf (sp->errmsg, "InChI string doesn't have connection layer");
+      return 0;
+    }
+
+  ptr = start + 2; /* skip over /c */
+  for (end = ptr; *end != '/' && !isspace (*end) && *end != '\0'; ++end)
+    ;
+
+  size = end - ptr;
+  start = malloc (size + 1);
+  (void) strncpy (start, ptr, size);
+  start[size] = '\0';
+
+  size = 0;
+  ptr = start;
+  for (ptr = strtok (ptr, ";"); ptr != 0; ptr = strtok (0, ";"))
+    {
+      int n = parse_inchi_graph (&pG, &psize, ptr, sp->errmsg);
+      if (n > nv)
+        {
+          if (G != 0)
+            free (G);
+
+          G = pG;
+          size = psize;
+          nv = n;
+
+          pG = 0;
+          psize = 0;
+        }
+    }
+  free (start);
+
+  if (pG != 0)
+    free (pG);
 
   if (nv > SPECTRAL_MAXG)
     {
@@ -358,8 +405,6 @@ spectral_inchi (spectral_t *sp, const char *inchi)
           nv = -1;
         }
     }
-
-  free (ppv);
   free (G);
 
   return nv;
