@@ -10,13 +10,12 @@
 #include "interval.h"
 #include "spectral.h"
 
-/**
- * unfortunately due to numerical round offs, we can't
- * have hashkeys that are independent of eigensolvers!
- */
 #ifdef HAVE_GSL
 # include <gsl/gsl_eigen.h>
 #else
+#warning "**** Please consider using the GSL eigensolver. It's an order \
+of magnitude faster! The bundled implementation is only for completeness \
+sake. ****"
 # include "jacobi.h"
 #endif
 
@@ -46,8 +45,10 @@
  */
 struct __spectral_s 
 {
-  size_t bufsiz; /* buffer size of spectrum */
+  size_t bsize; /* buffer size of spectrum */
   float *spectrum; /* spectrum buffer */
+  char *inchi_c; /* connection layer */
+  size_t isize; /* connection buffer size */
   sha1_t *sha1; /* sha1 hash */
   interval_t *itree; /* interval tree for quantization */
   unsigned char digest[20]; /* digest buffer */
@@ -217,10 +218,6 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 
 #else
 
-#warning "**** Please consider using the GSL eigensolver. It's an order \
-of magnitude faster! The bundled implementation is only for completeness \
-sake. ****"
-
 static int
 graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 {
@@ -363,7 +360,8 @@ spectral_inchi (spectral_t *sp, const char *inchi)
 
   size = 0;
   ptr = start;
-  for (ptr = strtok (ptr, ";"); ptr != 0; ptr = strtok (0, ";"))
+  for (ptr = strtok_r (ptr, ";", &end); 
+       ptr != 0; ptr = strtok_r (0, ";", &end))
     {
       int n = parse_inchi_graph (&pG, &psize, ptr, sp->errmsg);
       if (n > nv)
@@ -374,6 +372,22 @@ spectral_inchi (spectral_t *sp, const char *inchi)
           G = pG;
           size = psize;
           nv = n;
+
+          { char *p = ptr;
+            while (*p != '\0' && *p != '*')
+              ++p;
+
+            /* don't retain the multiplicity character from the /c layer */
+            if (*p == '*')
+              ptr = ++p;
+          }
+          psize = strlen (ptr);
+          if (psize > sp->isize)
+            {
+              sp->inchi_c = realloc (sp->inchi_c, psize+1);
+              sp->isize = psize;
+            }
+          (void) strcpy (sp->inchi_c, ptr);
 
           pG = 0;
           psize = 0;
@@ -392,10 +406,10 @@ spectral_inchi (spectral_t *sp, const char *inchi)
     }
   else
     {
-      if (sp->bufsiz < nv)
+      if (sp->bsize < nv)
         {
           sp->spectrum = realloc (sp->spectrum, nv*sizeof (float));
-          sp->bufsiz = nv;
+          sp->bsize = nv;
         }
 
       if (graph_spectrum (sp->spectrum, G, nv, size) < 0)
@@ -420,10 +434,12 @@ spectral_create ()
   spectral_t *sp = malloc (sizeof (struct __spectral_s));
   if (sp != 0)
     {
-      sp->bufsiz = 0;
+      sp->bsize = 0;
       sp->spectrum = 0;
-      memset (sp->hashkey, 0, sizeof (sp->hashkey));
-      memset (sp->errmsg, 0, sizeof (sp->errmsg));
+      sp->inchi_c = 0;
+      sp->isize = 0;
+      (void) memset (sp->hashkey, 0, sizeof (sp->hashkey));
+      (void) memset (sp->errmsg, 0, sizeof (sp->errmsg));
       sp->sha1 = sha1_create ();
       /* eigenvalues of a normalized laplacian is bounded by [0,2] */
       sp->itree = interval_create (0., 2., 32);
@@ -438,6 +454,8 @@ spectral_free (spectral_t *sp)
     {
       if (sp->spectrum != 0)
         free (sp->spectrum);
+      if (sp->inchi_c != 0)
+        free (sp->inchi_c);
       sha1_free (sp->sha1);
       interval_free (sp->itree);
       free (sp);
@@ -464,45 +482,38 @@ spectral_digest (spectral_t *sp, const char *inchi)
 
   size = spectral_inchi (sp, inchi);
   if (size < 0)
-    ;
-  else
-    {
-      sha1_reset (sp->sha1);
+    return 0;
 
-      /*
-       * first block is topology
-       */
-      digest_spectrum (sp, size);
-      sha1_digest (sp->sha1, sp->digest);
-      start = sp->hashkey;
-      b32_encode35 (&start, sp->digest, 5); /* 7 char */
+  sha1_reset (sp->sha1);
+  
+  /*
+   * first block is topology
+   */
+  digest_spectrum (sp, size);
+  sha1_digest (sp->sha1, sp->digest);
+  start = sp->hashkey;
+  b32_encode35 (&start, sp->digest, 5); /* 7 char */
+  
+  /*
+   * second block is connection
+   */
+  sha1_reset (sp->sha1);
+  sha1_update (sp->sha1, sp->digest, 20); /* chaining */
+  sha1_update (sp->sha1, (unsigned char *)sp->inchi_c, 
+               strlen (sp->inchi_c));
+  sha1_digest (sp->sha1, sp->digest);
+  start = sp->hashkey + 7;
+  b32_encode40 (&start, sp->digest, 5); /* 8 char's */
+  
+  /*
+   * final block is the full inchi
+   */
+  sha1_reset (sp->sha1);
+  sha1_update (sp->sha1, sp->digest, 20);
+  sha1_update (sp->sha1, (const unsigned char *)inchi, strlen (inchi));
+  sha1_digest (sp->sha1, sp->digest);
+  start = sp->hashkey + 15;
+  b32_encode45 (&start, sp->digest, 6);
 
-      /*
-       * second block is connection
-       */
-      sha1_reset (sp->sha1);
-      sha1_update (sp->sha1, sp->digest, 20); /* chaining */
-      start = strstr (inchi, "/c");
-      if (start != 0)
-        {
-          for (end = start+2; *end != '/' && *end != '\0'; ++end)
-            ;
-          sha1_update (sp->sha1, (unsigned char *)start, end - start);
-        }
-      sha1_digest (sp->sha1, sp->digest);
-      start = sp->hashkey + 7;
-      b32_encode40 (&start, sp->digest, 5); /* 8 char's */
-
-      /*
-       * final block is the full inchi
-       */
-      sha1_reset (sp->sha1);
-      sha1_update (sp->sha1, sp->digest, 20);
-      sha1_update (sp->sha1, (const unsigned char *)inchi, strlen (inchi));
-      sha1_digest (sp->sha1, sp->digest);
-      start = sp->hashkey + 15;
-      b32_encode45 (&start, sp->digest, 6);
-    }
-
-  return size < 0 ? 0 : sp->hashkey;
+  return sp->hashkey;
 }
