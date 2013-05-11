@@ -12,6 +12,8 @@
 
 #ifdef HAVE_GSL
 # include <gsl/gsl_eigen.h>
+#elif defined(HAVE_MKL)
+# include "mkl_lapacke.h" /* Intel MKL library */
 #else
 #warning "**** Please consider using the GSL eigensolver. It's an order \
 of magnitude faster! The bundled implementation is only for completeness \
@@ -174,39 +176,42 @@ spectral_normalized_graph (float **M, const int *G, int nv, size_t size)
 static int
 graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 {
-  int i, j;
-  float **a;
+  int i, j, v, *d;
+  double x;
   gsl_eigen_symmv_workspace *ws = gsl_eigen_symmv_alloc (nv);
   gsl_matrix *A = gsl_matrix_alloc (nv, nv);
   gsl_matrix *V = gsl_matrix_alloc (nv, nv);
   gsl_vector *L = gsl_vector_alloc (nv);
 
-  a = malloc (sizeof (float *)*nv);
-  for (i = 0; i < nv; ++i)
-    a[i] = malloc (nv*sizeof (float));
-  
-  spectral_normalized_graph (a, G, nv, size);
-
-  /* copy over the matrix */
+  /* 
+   * normalized laplacian matrix
+   */
+  d = malloc (nv *sizeof (int));
   for (i = 0; i < nv; ++i)
     {
-      for (j = i+1; j < nv; ++j)
+      d[i] = 0;
+      for (j = 0; j < nv; ++j)
+        if (i != j)
+          {
+            v = __get_edge (i+1, j+1);
+            d[i] += v;
+          }
+
+      gsl_matrix_set (A, i, i, 1);
+      for (j = 0; j < i; ++j)
         {
-          gsl_matrix_set (A, i, j, a[i][j]);
-          gsl_matrix_set (A, j, i, a[j][i]);
+          x = -1./sqrt (d[i]*d[j]);
+          gsl_matrix_set (A, i, j, x);
+          gsl_matrix_set (A, j, i, x);
         }
-      gsl_matrix_set (A, i, i, a[i][i]);
     }
+  free (d);
   
   gsl_eigen_symmv (A, L, V, ws);
   gsl_eigen_symmv_sort (L, V, GSL_EIGEN_SORT_VAL_ASC);
   
   for (i = 0; i < nv; ++i)
-    {
-      spectrum[i] = gsl_vector_get (L, i);
-      free (a[i]);
-    }
-  free (a);
+    spectrum[i] = gsl_vector_get (L, i);
     
   gsl_vector_free (L);
   gsl_matrix_free (V);
@@ -214,6 +219,54 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
   gsl_eigen_symmv_free (ws);
 
   return 0;
+}
+
+#elif defined(HAVE_MKL)
+
+static int
+graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
+{
+  float *a;
+  int i, j, v, *d, err = 0;
+
+  a = malloc (sizeof (float *)*nv*nv);
+  d = malloc (nv *sizeof (int));
+
+  /* normalized laplacian */
+  for (i = 0; i < nv; ++i)
+    {
+      d[i] = 0.;
+      for (j = 0; j < nv; ++j)
+        if (i != j)
+          {
+            v = __get_edge (i+1, j+1);
+            d[i] += v;
+          }
+
+      a[i*nv+i] = 1;
+
+      /* upper triangle */
+      for (j = 0; j < i; ++j)
+        {
+          a[j*nv+i] = -1./sqrt (d[i]*d[j]);
+          a[i*nv+j] = 0.;
+        }
+    }
+  free (d);
+
+#if 0
+  for (i = 0; i < nv; ++i)
+    {
+      for (j = 0; j < nv; ++j)
+        printf (" %-4.5f", a[i*nv+j]);
+      printf ("\n");
+    }
+#endif
+
+  err = LAPACKE_ssyevd (LAPACK_ROW_MAJOR, 'V', 'U', nv, a, nv, spectrum);
+  free (a);
+
+  return err;
 }
 
 #else
