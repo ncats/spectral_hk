@@ -5,10 +5,10 @@ CC = gcc
 DEBUG=-O3 #-DSPECTRAL_DEBUG
 
 # uncomment to compile with gsl
-GSLFLAGS=-DHAVE_GSL -I/opt/local/include
+#GSLFLAGS=-DHAVE_GSL -I/opt/local/include
 
 # uncomment to compile with gsl library
-GSLLIBS=-L/opt/local/lib -lgsl -lcblas ## macports
+#GSLLIBS=-L/opt/local/lib -lgsl -lcblas ## macports
 #GSLLIBS=-lgsl -lgslcblas ## linux
 
 ######################################################################
