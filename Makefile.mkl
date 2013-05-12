@@ -1,18 +1,25 @@
-## Please consider using either Makefile.gsl or Makefile.mkl
-## The bundled eigensolver is really for demonstration only!
-SUFFIX = 
-CC = gcc
+## update to point to the root location of the MKL library
+MKLROOT = ../composerxe/mkl
 
-# uncomment to compile debug
+SUFFIX =
+CC = icc
+
 DEBUG=-O3 #-DSPECTRAL_DEBUG
+
+# please consult here
+#   http://software.intel.com/en-us/articles/intel-mkl-link-line-advisor/
+MKLFLAGS=-DHAVE_MKL -I$(MKLROOT)/include
+MKLLIBS=-Wl,--start-group $(MKLROOT)/lib/intel64/libmkl_sequential.a \
+        $(MKLROOT)/lib/intel64/libmkl_intel_ilp64.a \
+        $(MKLROOT)/lib/intel64/libmkl_core.a -Wl,--end-group -lpthread -lm
 
 ######################################################################
 ## shouldn't have to edit below
 ######################################################################
 TARGETS = libspectral.a spectral_hk$(SUFFIX)
 OBJS = b32.o sha1.o jacobi.o spectral.o interval.o
-CFLAGS= -Wall $(DEBUG)
-LIBS = -lm 
+CFLAGS= -Wall $(MKLFLAGS) $(DEBUG)
+LIBS = -lm $(MKLLIBS)
 
 .c.o: $(OBJS)
 	$(CC) $(CFLAGS) -c $<

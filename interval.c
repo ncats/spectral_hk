@@ -169,7 +169,7 @@ int main (int argc, char *argv[])
     {
       v = atof (argv[i]);
       printf ("%.10lf => %d\n", v, 
-              interval_encode32 (tree, v, 0.0005));
+              interval_encode32 (tree, v, 0.00005));
     }
   
   interval_free (tree);
