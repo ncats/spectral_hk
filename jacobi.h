@@ -10,7 +10,7 @@ extern "C" {
  * Eigensolver based on jacobi rotation; this is a rip off implementation
  * from the book Numerical Recipes in C.
  */
-extern int jacobi (float **a, int n, float d[], float **v);
+extern int jacobi (double **a, int n, double d[], double **v);
 
 #ifdef __cplusplus
 }

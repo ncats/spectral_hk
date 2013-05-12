@@ -16,10 +16,10 @@
 /**
  * sort eigenvalues and eigenvectors in ascending order
  */
-static void eigen_sorter (float d[], float **v, int n)
+static void eigen_sorter (double d[], double **v, int n)
 {
   int i, j, k;
-  float p;
+  double p;
 
   for (i = 0; i < n-1; ++i)
     {
@@ -45,10 +45,10 @@ static void eigen_sorter (float d[], float **v, int n)
 /**
  * eigensolver from the book Numerical Recipes in C, 1992
  */
-int jacobi (float **a, int n, float d[], float **v)
+int jacobi (double **a, int n, double d[], double **v)
 {
   int j, iq, ip, i, err = 0;
-  float tresh, theta, tau, t, sm, s, h, g, c, *b, *z;
+  double tresh, theta, tau, t, sm, s, h, g, c, *b, *z;
 
   b = malloc (sizeof (*b) * n);
   if (b == 0)
@@ -122,8 +122,8 @@ int jacobi (float **a, int n, float d[], float **v)
 
 #define __rotate(a,i,j,k,l) \
   do { \
-    float g = a[i][j]; \
-    float h = a[k][l]; \
+    double g = a[i][j]; \
+    double h = a[k][l]; \
     a[i][j] = g-s*(h+g*tau); \
     a[k][l] = h+s*(g-h*tau); \
   } while (0)
@@ -188,7 +188,7 @@ Eigenvalues & Fiedler vector
     5.0418     0.1172
   */
 
-  float m[16][16] = {
+  double m[16][16] = {
     {2, 0, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 2, 0, 0, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {-1, 0, 2, 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0},
@@ -206,16 +206,16 @@ Eigenvalues & Fiedler vector
     {0, 0, 0, 0, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 3, 0},
     {0, 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, 2}    
   };
-  float d[16] = {0};
-  float **v, **a;
+  double d[16] = {0};
+  double **v, **a;
   int err, i;
 
-  a = malloc (sizeof (float *)*n);
-  v = malloc (sizeof (float *)*n);
+  a = malloc (sizeof (double *)*n);
+  v = malloc (sizeof (double *)*n);
   for (i = 0; i < n; ++i)
     {
       a[i] = m[i];
-      v[i] = malloc (n*sizeof (float));
+      v[i] = malloc (n*sizeof (double));
     }
 
   err = jacobi (a, 16, d, v);

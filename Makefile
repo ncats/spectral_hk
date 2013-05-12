@@ -1,14 +1,15 @@
 ## Please consider using either Makefile.gsl or Makefile.mkl
 ## The bundled eigensolver is really for demonstration only!
-
+SUFFIX = 
 CC = gcc
+
 # uncomment to compile debug
 DEBUG=-O3 #-DSPECTRAL_DEBUG
 
 ######################################################################
 ## shouldn't have to edit below
 ######################################################################
-TARGETS = libspectral.a spectral_hk
+TARGETS = libspectral.a spectral_hk$(SUFFIX)
 OBJS = b32.o sha1.o jacobi.o spectral.o interval.o
 CFLAGS= -Wall $(DEBUG)
 LIBS = -lm 
@@ -21,11 +22,11 @@ all: $(TARGETS)
 libspectral.a: $(OBJS)
 	$(AR) -r $@ $(OBJS) 
 
-spectral_hk: libspectral.a spectral_hk.c
+spectral_hk$(SUFFIX): libspectral.a spectral_hk.c
 	$(CC) $(CFLAGS) -o $@  spectral_hk.c libspectral.a $(LIBS)
 
 test: spectral_hk
-	./spectral_hk examples.txt
+	./spectral_hk examples.txt | sort
 
 clean:
 	$(RM) $(OBJS) $(TARGETS)

@@ -15,9 +15,9 @@
 #elif defined(HAVE_MKL)
 # include "mkl_lapacke.h" /* Intel MKL library */
 #else
-#warning "**** Please consider using the GSL eigensolver. It's an order \
-of magnitude faster! The bundled implementation is only for completeness \
-sake. ****"
+#warning "**** Please consider using either the GSL or MKL eigensolver. \
+They are orders of magnitude faster! The bundled implementation is only \
+for completeness sake. ****"
 # include "jacobi.h"
 #endif
 
@@ -148,7 +148,7 @@ spectral_signless_graph (float **M, const int *G, int nv, size_t size)
 }
 
 void
-spectral_normalized_graph (float **M, const int *G, int nv, size_t size)
+spectral_normalized_graph (double **M, const int *G, int nv, size_t size)
 {
   int i, j, v, *d;
 
@@ -226,11 +226,11 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 static int
 graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 {
-  float *a;
-  int i, j, v, *d, err = 0;
+  double *a, *d;
+  int i, j, v, err = 0;
 
-  a = malloc (sizeof (float *)*nv*nv);
-  d = malloc (nv *sizeof (int));
+  a = malloc (sizeof (double)*nv*nv);
+  d = malloc (nv *sizeof (double));
 
   /* normalized laplacian */
   for (i = 0; i < nv; ++i)
@@ -252,7 +252,6 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
           a[i*nv+j] = 0.;
         }
     }
-  free (d);
 
 #if 0
   for (i = 0; i < nv; ++i)
@@ -263,7 +262,11 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
     }
 #endif
 
-  err = LAPACKE_ssyevd (LAPACK_ROW_MAJOR, 'V', 'U', nv, a, nv, spectrum);
+  err = LAPACKE_dsyevd (LAPACK_ROW_MAJOR, 'V', 'U', nv, a, nv, d);
+  for (i = 0; i < nv; ++i)
+    spectrum[i] = d[i];
+
+  free (d);
   free (a);
 
   return err;
@@ -274,25 +277,28 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 static int
 graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 {
-  float **evec, **a;
+  double **evec, **a, *d;
   int i, err = 0;
 
-  a = malloc (sizeof (float *)*nv);
-  evec = malloc (sizeof (float *)*nv);
+  a = malloc (sizeof (double *)*nv);
+  d = malloc (sizeof (double)*nv);
+  evec = malloc (sizeof (double *)*nv);
   for (i = 0; i < nv; ++i)
     {
-      a[i] = malloc (nv*sizeof (float));
-      evec[i] = malloc (nv*sizeof (float));
+      a[i] = malloc (nv*sizeof (double));
+      evec[i] = malloc (nv*sizeof (double));
     }
 
   spectral_normalized_graph (a, G, nv, size);
-  err = jacobi (a, nv, spectrum, evec);
+  err = jacobi (a, nv, d, evec);
 
   for (i = 0; i < nv; ++i)
     {
+      spectrum[i] = d[i];
       free (a[i]);
       free (evec[i]);
     }
+  free (d);
   free (a);
   free (evec);
 

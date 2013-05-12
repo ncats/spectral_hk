@@ -1,17 +1,22 @@
 ## update to point to the root location of the MKL library
 MKLROOT = ../composerxe/mkl
 
+SUFFIX =
 CC = icc
-# uncomment to compile debug
+
 DEBUG=-O3 #-DSPECTRAL_DEBUG
+
+# please consult here
+#   http://software.intel.com/en-us/articles/intel-mkl-link-line-advisor/
 MKLFLAGS=-DHAVE_MKL -I$(MKLROOT)/include
-MKLLIBS=-L$(MKLROOT)/lib/intel64 \
-	-lmkl_sequential -lmkl_intel_ilp64 -lmkl_core -lpthread
+MKLLIBS=-Wl,--start-group $(MKLROOT)/lib/intel64/libmkl_sequential.a \
+        $(MKLROOT)/lib/intel64/libmkl_intel_ilp64.a \
+        $(MKLROOT)/lib/intel64/libmkl_core.a -Wl,--end-group -lpthread -lm
 
 ######################################################################
 ## shouldn't have to edit below
 ######################################################################
-TARGETS = libspectral.a spectral_hk
+TARGETS = libspectral.a spectral_hk$(SUFFIX)
 OBJS = b32.o sha1.o jacobi.o spectral.o interval.o
 CFLAGS= -Wall $(MKLFLAGS) $(DEBUG)
 LIBS = -lm $(MKLLIBS)
@@ -24,11 +29,11 @@ all: $(TARGETS)
 libspectral.a: $(OBJS)
 	$(AR) -r $@ $(OBJS) 
 
-spectral_hk: libspectral.a spectral_hk.c
+spectral_hk$(SUFFIX): libspectral.a spectral_hk.c
 	$(CC) $(CFLAGS) -o $@  spectral_hk.c libspectral.a $(LIBS)
 
 test: spectral_hk
-	./spectral_hk examples.txt
+	./spectral_hk examples.txt | sort
 
 clean:
 	$(RM) $(OBJS) $(TARGETS)
