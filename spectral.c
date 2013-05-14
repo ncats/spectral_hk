@@ -30,7 +30,7 @@ for completeness sake. ****"
  * (e.g., iterative ones) are more appropriate.
  */
 #ifndef SPECTRAL_MAXG
-# define SPECTRAL_MAXG 200
+# define SPECTRAL_MAXG 300
 #endif
 
 /*
@@ -54,7 +54,7 @@ struct __spectral_s
   sha1_t *sha1; /* sha1 hash */
   interval_t *itree; /* interval tree for quantization */
   unsigned char digest[20]; /* digest buffer */
-  char hashkey[25]; /* 7(topology) + 8(connection) + 9(full) */
+  char hashkey[31]; /* 9(topology) + 10(connection) + 11(full) */
   char errmsg[BUFSIZ];
 };
 
@@ -206,6 +206,16 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
         }
     }
   free (d);
+
+#ifdef SPECTRAL_DEBUG
+  printf ("G = \n");
+  for (i = 0; i < nv; ++i)
+    {
+      for (j = 0; j < nv; ++j)
+        printf (" %-4.5f", gsl_matrix_get (A, i, j));
+      printf ("\n");
+    }
+#endif
   
   gsl_eigen_symmv (A, L, V, ws);
   gsl_eigen_symmv_sort (L, V, GSL_EIGEN_SORT_VAL_ASC);
@@ -253,7 +263,8 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
         }
     }
 
-#if 0
+#ifdef SPECTRAL_DEBUG
+  printf ("G = \n");
   for (i = 0; i < nv; ++i)
     {
       for (j = 0; j < nv; ++j)
@@ -290,6 +301,19 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
     }
 
   spectral_normalized_graph (a, G, nv, size);
+#ifdef SPECTRAL_DEBUG
+  printf ("G = \n");
+  for (i = 0; i < nv; ++i)
+    printf (" % 4d", i+1);
+  printf ("\n");
+  for (i = 0; i < nv; ++i)
+    {
+      int j;
+      for (j = 0; j < nv; ++j)
+        printf (" % 4.1f", a[i][j]);
+      printf (" :%3d\n", i+1);
+    }
+#endif
   err = jacobi (a, nv, d, evec);
 
   for (i = 0; i < nv; ++i)
@@ -320,6 +344,8 @@ parse_inchi_graph (int **pG, size_t *psize, char *inchi, char errmsg[])
       *pG = realloc (*pG, size*size*sizeof (int));
       *psize = size;
     }
+  else
+    size = *psize;
 
   G = *pG;
   { int i = 0, j;
@@ -470,7 +496,9 @@ spectral_inchi (spectral_t *sp, const char *inchi)
           sp->spectrum = realloc (sp->spectrum, nv*sizeof (float));
           sp->bsize = nv;
         }
-
+#ifdef SPECTRAL_DEBUG
+      printf ("## /c = %s\n", sp->inchi_c);
+#endif
       if (graph_spectrum (sp->spectrum, G, nv, size) < 0)
         {
           sprintf (sp->errmsg, "Eigensolver didn't converge within "
@@ -536,7 +564,7 @@ spectral_error (const spectral_t *sp)
 const char *
 spectral_digest (spectral_t *sp, const char *inchi)
 {
-  char *start, *end;
+  char *start;
   int size;
 
   size = spectral_inchi (sp, inchi);
@@ -551,7 +579,7 @@ spectral_digest (spectral_t *sp, const char *inchi)
   digest_spectrum (sp, size);
   sha1_digest (sp->sha1, sp->digest);
   start = sp->hashkey;
-  b32_encode35 (&start, sp->digest, 5); /* 7 char */
+  b32_encode45 (&start, sp->digest, 20); /* 9 chars */
   
   /*
    * second block is connection
@@ -561,8 +589,8 @@ spectral_digest (spectral_t *sp, const char *inchi)
   sha1_update (sp->sha1, (unsigned char *)sp->inchi_c, 
                strlen (sp->inchi_c));
   sha1_digest (sp->sha1, sp->digest);
-  start = sp->hashkey + 7;
-  b32_encode40 (&start, sp->digest, 5); /* 8 char's */
+  start = sp->hashkey + 9;
+  b32_encode50 (&start, sp->digest, 20); /* 10 chars */
   
   /*
    * final block is the full inchi
@@ -571,8 +599,8 @@ spectral_digest (spectral_t *sp, const char *inchi)
   sha1_update (sp->sha1, sp->digest, 20);
   sha1_update (sp->sha1, (const unsigned char *)inchi, strlen (inchi));
   sha1_digest (sp->sha1, sp->digest);
-  start = sp->hashkey + 15;
-  b32_encode45 (&start, sp->digest, 6);
+  start = sp->hashkey + 19;
+  b32_encode55 (&start, sp->digest, 20); /* 11 chars */
 
   return sp->hashkey;
 }

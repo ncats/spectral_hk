@@ -4,7 +4,8 @@ SUFFIX =
 CC = gcc
 
 # uncomment to compile debug
-DEBUG=-O3 #-DSPECTRAL_DEBUG
+#DEBUG=-g -DSPECTRAL_DEBUG
+DEBUG=-O3
 
 ######################################################################
 ## shouldn't have to edit below

@@ -1,17 +1,18 @@
 ##
-SUFFIX =
+SUFFIX = _gsl
 CC = gcc
 
 # uncomment to compile debug
-DEBUG=-O3 #-DSPECTRAL_DEBUG
+#DEBUG=-g -DSPECTRAL_DEBUG
+DEBUG=-O3
 
 # uncomment to compile with gsl
 GSLFLAGS=-DHAVE_GSL -I/opt/local/include
 
 # uncomment to compile with gsl library
-#GSLLIBS=-L/opt/local/lib -lgsl -lcblas ## macports
+GSLLIBS=-L/opt/local/lib -lgsl -lcblas ## macports
 #GSLLIBS=/usr/lib64/libgsl.a /usr/lib64/libgslcblas.a -lm ## linux static
-GSLLIBS=-lgsl -lgslcblas ## linux
+#GSLLIBS=-lgsl -lgslcblas ## linux
 
 
 ######################################################################
