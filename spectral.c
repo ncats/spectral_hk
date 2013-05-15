@@ -21,7 +21,11 @@
 # define SPECTRAL_VERSION __SPECTRAL_VERSION " (GSL-" GSL_VERSION ")"
 #elif defined(HAVE_MKL)
 # include "mkl.h" /* Intel MKL library */
-# define SPECTRAL_VERSION __SPECTRAL_VERSION " (MKL-" INTEL_MKL_VERSION ")"
+# define _XSTR(X) _STR(X)
+# define _STR(X) #X
+# define SPECTRAL_VERSION __SPECTRAL_VERSION \
+  " (MKL-" _XSTR(__INTEL_MKL__) "." _XSTR(__INTEL_MKL_MINOR__) \
+  "." _XSTR(__INTEL_MKL_UPDATE__) ")"
 #else
 #warning "**** Please consider using either the GSL or MKL eigensolver. \
 They are orders of magnitude faster! The bundled implementation is only \
