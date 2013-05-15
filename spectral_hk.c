@@ -18,6 +18,7 @@ main (int argc, char *argv[])
   char buffer[1<<15];
   const char *hk;
 
+  fprintf (stderr, "## spectral_hk -- %s\n", spectral_version ());
   if (argc > 1)
     {
       infp = fopen (argv[1], "r");

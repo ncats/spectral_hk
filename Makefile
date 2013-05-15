@@ -26,8 +26,8 @@ libspectral.a: $(OBJS)
 spectral_hk$(SUFFIX): libspectral.a spectral_hk.c
 	$(CC) $(CFLAGS) -o $@  spectral_hk.c libspectral.a $(LIBS)
 
-test: spectral_hk
-	./spectral_hk examples.txt | sort
+test: spectral_hk$(SUFFIX)
+	./spectral_hk$(SUFFIX) examples.txt | sort
 
 clean:
 	$(RM) $(OBJS) $(TARGETS)

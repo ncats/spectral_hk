@@ -19,7 +19,7 @@ MKLLIBS=-Wl,--start-group $(MKLROOT)/lib/intel64/libmkl_sequential.a \
 TARGETS = libspectral.a spectral_hk$(SUFFIX)
 OBJS = b32.o sha1.o jacobi.o spectral.o interval.o
 CFLAGS= -Wall $(MKLFLAGS) $(DEBUG)
-LIBS = -lm $(MKLLIBS)
+LIBS = $(MKLLIBS)
 
 .c.o: $(OBJS)
 	$(CC) $(CFLAGS) -c $<
@@ -32,8 +32,8 @@ libspectral.a: $(OBJS)
 spectral_hk$(SUFFIX): libspectral.a spectral_hk.c
 	$(CC) $(CFLAGS) -o $@  spectral_hk.c libspectral.a $(LIBS)
 
-test: spectral_hk
-	./spectral_hk examples.txt | sort
+test: spectral_hk$(SUFFIX)
+	./spectral_hk$(SUFFIX) examples.txt | sort
 
 clean:
 	$(RM) $(OBJS) $(TARGETS)

@@ -10,20 +10,30 @@
 #include "interval.h"
 #include "spectral.h"
 
+/*
+ * update as appropriate
+ */
+#define __SPECTRAL_VERSION "v0.1"
+
 #ifdef HAVE_GSL
 # include <gsl/gsl_eigen.h>
+# include <gsl/gsl_version.h>
+# define SPECTRAL_VERSION __SPECTRAL_VERSION " (GSL-" GSL_VERSION ")"
 #elif defined(HAVE_MKL)
-# include "mkl_lapacke.h" /* Intel MKL library */
+# include "mkl.h" /* Intel MKL library */
+# define SPECTRAL_VERSION __SPECTRAL_VERSION " (MKL-" INTEL_MKL_VERSION ")"
 #else
 #warning "**** Please consider using either the GSL or MKL eigensolver. \
 They are orders of magnitude faster! The bundled implementation is only \
 for completeness sake. ****"
 # include "jacobi.h"
+# define SPECTRAL_VERSION __SPECTRAL_VERSION " (Built-in Jacobi solver)"
 #endif
 
 #ifndef EPS
 # define EPS 1e-20
 #endif
+
 
 /*
  * maximum graph size; for large graphs a more specialized eigensolver
@@ -559,6 +569,12 @@ const char *
 spectral_error (const spectral_t *sp)
 {
   return sp->errmsg;
+}
+
+const char *
+spectral_version ()
+{
+  return SPECTRAL_VERSION;
 }
 
 const char *

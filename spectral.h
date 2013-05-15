@@ -16,6 +16,7 @@ extern const char * spectral_digest (spectral_t *, const char *inchi);
 extern const char * spectral_hashkey (const spectral_t *);
 extern const char * spectral_error (const spectral_t *);
 extern void spectral_free (spectral_t *);
+extern const char *spectral_version ();
 
 #ifdef __cplusplus
 }
