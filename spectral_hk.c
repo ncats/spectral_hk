@@ -55,7 +55,7 @@ main (int argc, char *argv[])
       hk = spectral_digest (spectral, buffer);
       if (hk != 0)
         {
-          fprintf (outfp, "%s\t%s", hk, tok);
+          fprintf (outfp, "%s\t%s\n", hk, tok);
         }
       else
         fprintf (stderr, "error: ** failed to process %s (%s) **\n", 
