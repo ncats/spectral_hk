@@ -9,7 +9,7 @@ main (int argc, char *argv[])
 {
   int i;
   unsigned char digest[20];
-  sha1_state *sha1 = sha1_create ();
+  sha1_t *sha1 = sha1_create ();
   char *s = "abc";
 
   sha1_update (sha1, (unsigned char *) "abc", strlen (s));

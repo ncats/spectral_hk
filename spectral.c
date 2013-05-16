@@ -80,14 +80,23 @@ digest_spectrum (spectral_t *sp, int size)
   unsigned char data[4];
   int i = 0;
 
+#ifdef SPECTRAL_DEBUG
+  printf ("## Eigen values:\n");
+  for (; i < size; ++i)
+      printf ("%3d: %.10f\n", i, sp->spectrum[i]);
+  printf ("## Encoded values:\n");
+  i = 0;
+#endif
+
   /* skip over all disconnected components */
-  while (sp->spectrum[++i] < EPS && i < size)
+  while (i < size && sp->spectrum[++i] < EPS)
     ;
+
   for (; i < size; ++i)
     {
       uv = interval_encode32 (sp->itree, sp->spectrum[i], ROUND_OFF);
 #ifdef SPECTRAL_DEBUG
-      printf ("%3d: %.10f %u\n", i, sp->spectrum[i], uv);
+      printf ("%3d: %.10f => %u\n", i, sp->spectrum[i], uv);
 #endif
       data[0] = uv >> 24;
       data[1] = (uv & 0x00ffffff) >> 16;
@@ -181,7 +190,7 @@ spectral_normalized_graph (double **M, const int *G, int nv, size_t size)
           }
       M[i][i] = 1;
       for (j = 0; j < i; ++j)
-        M[i][j] = M[j][i] = -1./sqrt (d[i]*d[j]);
+        M[i][j] = M[j][i] = __get_edge (j+1, i+1) ? -1./sqrt (d[i]*d[j]) : 0.;
     }
   free (d);
 }
@@ -214,7 +223,7 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
       gsl_matrix_set (A, i, i, 1);
       for (j = 0; j < i; ++j)
         {
-          x = -1./sqrt (d[i]*d[j]);
+          x = __get_edge (j+1, i+1) ? -1./sqrt (d[i]*d[j]) : 0.;
           gsl_matrix_set (A, i, j, x);
           gsl_matrix_set (A, j, i, x);
         }
@@ -272,7 +281,7 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
       /* upper triangle */
       for (j = 0; j < i; ++j)
         {
-          a[j*nv+i] = -1./sqrt (d[i]*d[j]);
+          a[j*nv+i] = __get_edge (j+1, i+1) ? -1./sqrt (d[i]*d[j]) : 0;
           a[i*nv+j] = 0.;
         }
     }
@@ -606,8 +615,9 @@ spectral_digest (spectral_t *sp, const char *inchi)
    */
   sha1_reset (sp->sha1);
   sha1_update (sp->sha1, sp->digest, 20); /* chaining */
-  sha1_update (sp->sha1, (unsigned char *)sp->inchi_c, 
-               strlen (sp->inchi_c));
+  if (size > 0)
+    sha1_update (sp->sha1, (unsigned char *)sp->inchi_c, 
+                 strlen (sp->inchi_c));
   sha1_digest (sp->sha1, sp->digest);
   start = sp->hashkey + 9;
   b32_encode50 (&start, sp->digest, 20); /* 10 chars */
