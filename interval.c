@@ -161,7 +161,7 @@ int main (int argc, char *argv[])
   int i;
   double v;
 
-  interval_t *tree = interval_create (0., 2., 32);
+  interval_t *tree = interval_create (0., 1., 32);
   printf ("** interval range: %lf\n", interval_range (tree));
   interval_dump (tree, stdout);
 
