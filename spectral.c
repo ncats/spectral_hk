@@ -44,7 +44,7 @@ for completeness sake. ****"
  * (e.g., iterative ones) are more appropriate.
  */
 #ifndef SPECTRAL_MAXG
-# define SPECTRAL_MAXG 300
+# define SPECTRAL_MAXG 500
 #endif
 
 /*
@@ -74,7 +74,7 @@ struct __spectral_s
 
 
 static void
-digest_spectrum (spectral_t *sp, int size)
+__digest_spectrum (spectral_t *sp, int size)
 {
   unsigned int uv;
   unsigned char data[4];
@@ -82,8 +82,15 @@ digest_spectrum (spectral_t *sp, int size)
 
 #ifdef SPECTRAL_DEBUG
   printf ("## Eigen values:\n");
-  for (; i < size; ++i)
-      printf ("%3d: %.10f\n", i, sp->spectrum[i]);
+  { double p = 0.;
+    for (; i < size; ++i)
+      {
+        printf ("%3d: %.10f %.10f %.10f\n", 
+                i, sp->spectrum[i], sp->spectrum[i] - p, 
+                sp->spectrum[i]/sp->spectrum[1]);
+        p = sp->spectrum[i];
+      }
+  }
   printf ("## Encoded values:\n");
   i = 0;
 #endif
@@ -104,6 +111,46 @@ digest_spectrum (spectral_t *sp, int size)
       data[3] = uv & 0xff;
       sha1_update (sp->sha1, data, sizeof (data));
     }
+}
+
+static void
+digest_spectrum (spectral_t *sp, int size)
+{
+  unsigned char data[2];
+  unsigned int uv;
+  int i = 0, j;
+
+  /* skip over all disconnected components */
+  while (i < size && sp->spectrum[++i] < EPS)
+    ;
+
+#ifdef SPECTRAL_DEBUG
+  printf ("spectral sequence:");
+#endif
+
+  for (j = i; j < size; ++j)
+    {
+      uv = (int)(sp->spectrum[j] / sp->spectrum[i] + 0.5);
+#ifdef SPECTRAL_DEBUG
+      printf (" %u", uv);
+#endif
+      data[0] = uv & 0xff;
+      data[1] = (uv & 0xffff) >> 8;
+      sha1_update (sp->sha1, data, sizeof (data));
+    }
+
+#ifdef SPECTRAL_DEBUG
+  { double x;
+  printf ("\neigenvalues:\n");
+  for (j = i; j < size; ++j)
+    {
+      uv = (int)(sp->spectrum[j] / sp->spectrum[i] + 0.5);
+      x = sp->spectrum[j] < 1. ? 1. - sp->spectrum[j] : sp->spectrum[j] - 1.;
+      printf ("%3d: %.10f => %3u %10u\n", j, sp->spectrum[j], uv, 
+              interval_encode32 (sp->itree, x, ROUND_OFF));
+    }
+  }
+#endif
 }
 
 void
@@ -552,7 +599,7 @@ spectral_create ()
       (void) memset (sp->errmsg, 0, sizeof (sp->errmsg));
       sp->sha1 = sha1_create ();
       /* eigenvalues of a normalized laplacian is bounded by [0,2] */
-      sp->itree = interval_create (0., 2., 32);
+      sp->itree = interval_create (0., 1., 32);
     }
   return sp;
 }
