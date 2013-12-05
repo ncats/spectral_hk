@@ -1,5 +1,5 @@
 ##
-SUFFIX =
+SUFFIX = _gsl
 CC = gcc
 
 # uncomment to compile debug
