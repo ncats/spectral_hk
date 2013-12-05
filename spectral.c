@@ -44,7 +44,7 @@ for completeness sake. ****"
  * (e.g., iterative ones) are more appropriate.
  */
 #ifndef SPECTRAL_MAXG
-# define SPECTRAL_MAXG 500
+# define SPECTRAL_MAXG 5000
 #endif
 
 /*
