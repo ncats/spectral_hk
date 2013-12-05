@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
+#include <ctype.h>
 #include "spectral.h"
 
 
@@ -16,6 +16,8 @@ main (int argc, char *argv[])
   FILE *infp, *outfp;
   spectral_t *spectral = spectral_create ();
   char buffer[1<<15];
+  char inchi[1<<14];
+  char *end = buffer + sizeof (buffer);
   const char *hk;
 
   fprintf (stderr, "## spectral_hk -- %s\n", spectral_version ());
@@ -50,16 +52,26 @@ main (int argc, char *argv[])
    */
   while (fgets (buffer, sizeof (buffer), infp) != 0)
     {
-      char *tok, *last;
-      tok = strtok_r (buffer, " ", &last);
-      hk = spectral_digest (spectral, buffer);
-      if (hk != 0)
+      char *tok = buffer;
+      while (!isspace (*tok) && tok < end)
+        ++tok;
+
+      if (tok < end && (tok - buffer) < sizeof (inchi))
         {
-          fprintf (outfp, "%s\t%s", hk, tok);
+          (void) strncpy (inchi, buffer, tok - buffer);
+          inchi[tok-buffer] = '\0';
+
+          hk = spectral_digest (spectral, inchi);
+          if (hk != 0)
+            {
+              fprintf (outfp, "%s\t%s", hk, buffer);
+            }
+          else
+            fprintf (stderr, "error: ** failed to process %s (%s) **\n", 
+                     tok, spectral_error (spectral));
         }
       else
-        fprintf (stderr, "error: ** failed to process %s (%s) **\n", 
-                 tok, spectral_error (spectral));
+        fprintf (stderr, "error: ** InChI string exceeds buffer size! **\n");
     }
 
   spectral_free (spectral);
