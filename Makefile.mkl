@@ -1,7 +1,7 @@
 ## update to point to the root location of the MKL library
 MKLROOT = ../composerxe/mkl
 
-SUFFIX =
+SUFFIX = _mkl
 CC = icc
 
 DEBUG=-O3 #-DSPECTRAL_DEBUG

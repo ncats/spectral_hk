@@ -369,7 +369,7 @@ graph_spectrum (float *spectrum, float *fiedler,
   if (err == 0)
     {
       int k = 0;
-      while (k < nv && d[++i] < EPS)
+      while (k < nv && d[++k] < EPS)
         ;
 #ifdef SPECTRAL_DEBUG  
       printf ("Eigenvector of the second smallest eigenvalue (%d: %.5f):\n",
