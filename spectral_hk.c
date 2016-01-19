@@ -15,8 +15,8 @@ main (int argc, char *argv[])
   /* decode inchi graph */
   FILE *infp, *outfp;
   spectral_t *spectral = spectral_create ();
-  char buffer[1<<15];
-  char inchi[1<<14];
+  char buffer[1<<15] = {0};
+  char inchi[1<<14] = {0};
   char *end = buffer + sizeof (buffer);
   const char *hk;
 
@@ -64,7 +64,30 @@ main (int argc, char *argv[])
           hk = spectral_digest (spectral, inchi);
           if (hk != 0)
             {
-              fprintf (outfp, "%s\t%s", hk, buffer);
+              tok = buffer + strlen (buffer);
+              while (--tok > buffer && *tok != '\n')
+                ;
+              *tok = '\0';
+                    
+              fprintf (outfp, "%s\t%s\t", hk, buffer);
+              { size_t i, size = spectral_size (spectral);
+                const float *v = spectral_spectrum (spectral);
+                for (i = 0; i < size; ++i)
+                  {
+                    (void) fprintf (outfp, "%.5f", v[i]);
+                    if (i+1 < size)
+                      (void) fprintf (outfp, ",");
+                  }
+                fprintf (outfp, "\t");
+                v = spectral_fiedler (spectral);
+                for (i = 0; i < size; ++i)
+                  {
+                    (void) fprintf (outfp, "%.5f", v[i]);
+                    if (i+1 < size)
+                      (void) fprintf (outfp, ",");
+                  }
+                fprintf (outfp, "\n");
+              }
             }
           else
             fprintf (stderr, "error: ** failed to process %s (%s) **\n", 
