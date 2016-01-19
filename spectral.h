@@ -17,7 +17,11 @@ extern const char * spectral_hashkey (const spectral_t *);
 extern const char * spectral_error (const spectral_t *);
 extern void spectral_free (spectral_t *);
 extern const char *spectral_version ();
-
+extern int spectral_ratio (double *ratio, spectral_t *, const char *inchi);
+extern size_t spectral_size (const spectral_t *);
+extern const float *spectral_spectrum (const spectral_t *);
+extern const float *spectral_fiedler (const spectral_t *);
+  
 #ifdef __cplusplus
 }
 #endif

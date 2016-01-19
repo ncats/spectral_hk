@@ -48,7 +48,7 @@ static void eigen_sorter (double d[], double **v, int n)
 int jacobi (double **a, int n, double d[], double **v)
 {
   int j, iq, ip, i, err = 0;
-  double tresh, theta, tau, t, sm, s, h, g, c, *b, *z;
+  double tresh, theta, tau, t, sm, s, h, g, c, *b, *z=0;
 
   b = malloc (sizeof (*b) * n);
   if (b == 0)

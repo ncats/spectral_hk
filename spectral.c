@@ -63,6 +63,7 @@ struct __spectral_s
 {
   size_t bsize; /* buffer size of spectrum */
   float *spectrum; /* spectrum buffer */
+  float *fiedler; /* fiedler vector */
   char *inchi_c; /* connection layer */
   size_t isize; /* connection buffer size */
   sha1_t *sha1; /* sha1 hash */
@@ -154,7 +155,7 @@ digest_spectrum (spectral_t *sp, int size)
 }
 
 void
-spectral_adjacency_graph (float **M, const int *G, int nv, size_t size)
+spectral_adjacency_graph (double **M, const int *G, int nv, size_t size)
 {
   int i, j, v;
   /*
@@ -176,7 +177,7 @@ spectral_adjacency_graph (float **M, const int *G, int nv, size_t size)
 }
 
 void
-spectral_laplacian_graph (float **M, const int *G, int nv, size_t size)
+spectral_laplacian_graph (double **M, const int *G, int nv, size_t size)
 {
   int i, j, v, d;
   /* 
@@ -197,7 +198,7 @@ spectral_laplacian_graph (float **M, const int *G, int nv, size_t size)
 }
 
 void 
-spectral_signless_graph (float **M, const int *G, int nv, size_t size)
+spectral_signless_graph (double **M, const int *G, int nv, size_t size)
 {
   int i, j, v, d;
   /* 
@@ -244,7 +245,8 @@ spectral_normalized_graph (double **M, const int *G, int nv, size_t size)
 
 #ifdef HAVE_GSL
 static int
-graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
+graph_spectrum (float *spectrum, float *fiedler,
+                const int *G, int nv, size_t size)
 {
   int i, j, v, *d;
   double x;
@@ -289,6 +291,25 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
   
   gsl_eigen_symmv (A, L, V, ws);
   gsl_eigen_symmv_sort (L, V, GSL_EIGEN_SORT_VAL_ASC);
+
+  i = 0;
+  while (i < nv && gsl_vector_get (L, ++i) < EPS)
+    ;
+#ifdef SPECTRAL_DEBUG  
+  printf ("Eigenvector of the second smallest eigenvalue (%d: %.5f):\n",
+          i, gsl_vector_get (L, i));
+#endif
+  
+  { gsl_vector_view ev = gsl_matrix_column (V, i);
+    for (i = 0; i < nv; ++i)
+      {
+#ifdef SPECTRAL_DEBUG   
+        printf ("% 3d: % 11.10f\n", i, gsl_vector_get (&ev.vector, i));
+#endif
+        fiedler[i] = gsl_vector_get (&ev.vector, i);
+      }
+  }
+
   
   for (i = 0; i < nv; ++i)
     spectrum[i] = gsl_vector_get (L, i);
@@ -304,7 +325,8 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 #elif defined(HAVE_MKL)
 
 static int
-graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
+graph_spectrum (float *spectrum, float *fiedler,
+                const int *G, int nv, size_t size)
 {
   double *a, *d;
   int i, j, v, err = 0;
@@ -344,8 +366,25 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 #endif
 
   err = LAPACKE_dsyevd (LAPACK_ROW_MAJOR, 'V', 'U', nv, a, nv, d);
-  for (i = 0; i < nv; ++i)
-    spectrum[i] = d[i];
+  if (err == 0)
+    {
+      int k = 0;
+      while (k < nv && d[++i] < EPS)
+        ;
+#ifdef SPECTRAL_DEBUG  
+      printf ("Eigenvector of the second smallest eigenvalue (%d: %.5f):\n",
+              k, d[k]);
+#endif
+      
+      for (i = 0; i < nv; ++i)
+        {
+          spectrum[i] = d[i];
+          fiedler[i] = a[i*nv+k];
+#ifdef SPECTRAL_DEBUG   
+          printf ("% 3d: % 11.10f\n", i, fiedler[i]);
+#endif
+        }
+    }
 
   free (d);
   free (a);
@@ -356,7 +395,8 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
 #else
 
 static int
-graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
+graph_spectrum (float *spectrum, float *fiedler,
+                const int *G, int nv, size_t size)
 {
   double **evec, **a, *d;
   int i, err = 0;
@@ -371,6 +411,7 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
     }
 
   spectral_normalized_graph (a, G, nv, size);
+
 #ifdef SPECTRAL_DEBUG
   printf ("G = \n");
   for (i = 0; i < nv; ++i)
@@ -384,14 +425,32 @@ graph_spectrum (float *spectrum, const int *G, int nv, size_t size)
       printf (" :%3d\n", i+1);
     }
 #endif
+
   err = jacobi (a, nv, d, evec);
 
-  for (i = 0; i < nv; ++i)
-    {
-      spectrum[i] = d[i];
-      free (a[i]);
+  { int k = 0;
+    while (k < nv && d[++k] < EPS)
+      ;
+    
+#ifdef SPECTRAL_DEBUG    
+    printf ("Eigenvector of the second smallest eigenvalue (%d: %.5f):\n",
+            k, d[k]);
+#endif
+    
+    for (i = 0; i < nv; ++i)
+      {
+        spectrum[i] = d[i];
+        fiedler[i] = evec[i][k];
+#ifdef SPECTRAL_DEBUG
+        printf ("% 3d: % 11.10f\n", i, fiedler[i]);
+#endif
+        free (a[i]);    
+      }
+    
+    for (i = 0; i < nv; ++i)
       free (evec[i]);
-    }
+  }
+  
   free (d);
   free (a);
   free (evec);
@@ -564,12 +623,13 @@ spectral_inchi (spectral_t *sp, const char *inchi)
       if (sp->bsize < nv)
         {
           sp->spectrum = realloc (sp->spectrum, nv*sizeof (float));
+          sp->fiedler = realloc (sp->fiedler, nv*sizeof (float));
           sp->bsize = nv;
         }
 #ifdef SPECTRAL_DEBUG
       printf ("## /c = %s\n", sp->inchi_c);
 #endif
-      if (graph_spectrum (sp->spectrum, G, nv, size) < 0)
+      if (graph_spectrum (sp->spectrum, sp->fiedler, G, nv, size) < 0)
         {
           sprintf (sp->errmsg, "Eigensolver didn't converge within "
                    "specified number of iterations");
@@ -593,6 +653,7 @@ spectral_create ()
     {
       sp->bsize = 0;
       sp->spectrum = 0;
+      sp->fiedler = 0;
       sp->inchi_c = 0;
       sp->isize = 0;
       (void) memset (sp->hashkey, 0, sizeof (sp->hashkey));
@@ -611,12 +672,32 @@ spectral_free (spectral_t *sp)
     {
       if (sp->spectrum != 0)
         free (sp->spectrum);
+      if (sp->fiedler != 0)
+        free (sp->fiedler);
       if (sp->inchi_c != 0)
         free (sp->inchi_c);
       sha1_free (sp->sha1);
       interval_free (sp->itree);
       free (sp);
     }
+}
+
+const float *
+spectral_spectrum (const spectral_t *sp)
+{
+  return sp->spectrum;
+}
+
+const float *
+spectral_fiedler (const spectral_t *sp)
+{
+  return sp->fiedler;
+}
+
+size_t
+spectral_size (const spectral_t *sp)
+{
+  return sp->bsize;
 }
 
 const char *
@@ -680,4 +761,29 @@ spectral_digest (spectral_t *sp, const char *inchi)
   b32_encode55 (&start, sp->digest, 20); /* 11 chars */
 
   return sp->hashkey;
+}
+
+int
+spectral_ratio (double *ratio, spectral_t *sp, const char *inchi)
+{
+  int i, j, size = spectral_inchi (sp, inchi);
+  if (size < 0)
+    return -1;
+
+  i = 0;
+  /* skip over all disconnected components */
+  while (i < size && sp->spectrum[++i] < EPS)
+    ;
+
+#if 0
+  fprintf (stderr, "pi: %.5f\n", sp->spectrum[6]/sp->spectrum[3]);
+  for (j = i; j < size; ++j)
+    {
+      fprintf (stderr, "%3d: %.5f %.5f\n",
+               j, sp->spectrum[j]/sp->spectrum[i], sp->spectrum[j]);
+    }
+#endif
+  
+  *ratio = sp->spectrum[size-1]/(size*sp->spectrum[i]);
+  return 0;
 }
