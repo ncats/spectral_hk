@@ -59,8 +59,8 @@ main (int argc, char *argv[])
           ratio = 0.;
           if (spectral_ratio (&ratio, spectral, inchi) == 0)
             {
-              double d = fabs (2*M_PI-ratio);
-              //if (d < 0.001)
+              /*double d = fabs (2*M_PI-ratio);
+              if (d < 0.001)*/
                 fprintf (outfp, "%.5f\t%s", ratio, buffer);
             }
           else

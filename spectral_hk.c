@@ -69,7 +69,7 @@ main (int argc, char *argv[])
                 ;
               *tok = '\0';
                     
-              fprintf (outfp, "%s\t%s\t", hk, buffer);
+              (void) fprintf (outfp, "%s\t%s\t", hk, buffer);
               { size_t i, size = spectral_size (spectral);
                 const float *v = spectral_spectrum (spectral);
                 for (i = 0; i < size; ++i)
@@ -78,7 +78,7 @@ main (int argc, char *argv[])
                     if (i+1 < size)
                       (void) fprintf (outfp, ",");
                   }
-                fprintf (outfp, "\t");
+                (void) fprintf (outfp, "\t");
                 v = spectral_fiedler (spectral);
                 for (i = 0; i < size; ++i)
                   {
@@ -86,24 +86,25 @@ main (int argc, char *argv[])
                     if (i+1 < size)
                       (void) fprintf (outfp, ",");
                   }
-                fprintf (outfp, "\n");
+                (void) fprintf (outfp, "\n");
               }
             }
           else
-            fprintf (stderr, "error: ** failed to process %s (%s) **\n", 
-                     tok, spectral_error (spectral));
+            (void) fprintf (stderr, "error: ** failed to process %s (%s) **\n", 
+                            tok, spectral_error (spectral));
         }
       else
-        fprintf (stderr, "error: ** InChI string exceeds buffer size! **\n");
+        (void) fprintf (stderr,
+                        "error: ** InChI string exceeds buffer size! **\n");
     }
 
   spectral_free (spectral);
 
   if (infp != stdin)
-    fclose (infp);
+    (void) fclose (infp);
 
   if (outfp != stdout)
-    fclose (outfp);
+    (void) fclose (outfp);
 
   return 0;
 }

@@ -9,6 +9,7 @@
 #include "b32.h"
 #include "interval.h"
 #include "spectral.h"
+#include "periodic.h"
 
 /*
  * update as appropriate
@@ -38,6 +39,41 @@ for completeness sake. ****"
 # define EPS 1e-20
 #endif
 
+typedef struct __formula_s {
+  int index; /* this is not the same the component index */
+  int multiplier;
+  int count;
+  const element_t *element;
+  struct __formula_s *next;
+} formula_t;
+
+typedef struct __hlayer_s {
+  int index; /* component index */
+  int atom; /* atom index */
+  int count; /* number of Hs */
+  int group; /* shared Hs if group > 1 */
+  const element_t *element;
+  struct __hlayer_s *next;
+} hlayer_t;
+
+typedef struct __vertex_s {
+  int index;
+  int degree;
+  int hcount;
+  int charge;
+  const element_t *atom;
+  struct __vertex_s **neighbors; /* neighbors[0..degree-1] */
+} vertex_t;
+
+typedef struct __graph_s {
+  int index; /* component index */
+  int nv; /* number of vertices */
+  int *A; /* adjacency matrix */
+  vertex_t **G; /* adjacency list G[0..nv-1] */
+  size_t size; /* stride size */
+  formula_t *formula;
+  hlayer_t *hlayer;
+} graph_t;
 
 /*
  * maximum graph size; for large graphs a more specialized eigensolver
@@ -245,11 +281,12 @@ spectral_normalized_graph (double **M, const int *G, int nv, size_t size)
 
 #ifdef HAVE_GSL
 static int
-graph_spectrum (float *spectrum, float *fiedler,
-                const int *G, int nv, size_t size)
+graph_spectrum (float *spectrum, float *fiedler, const graph_t *g)
 {
-  int i, j, v, *d;
+  int i, j, v, *d, nv = g->nv;
   double x;
+  const int *G = g->A;
+  size_t size = g->size;
   gsl_eigen_symmv_workspace *ws = gsl_eigen_symmv_alloc (nv);
   gsl_matrix *A = gsl_matrix_alloc (nv, nv);
   gsl_matrix *V = gsl_matrix_alloc (nv, nv);
@@ -280,6 +317,7 @@ graph_spectrum (float *spectrum, float *fiedler,
   free (d);
 
 #ifdef SPECTRAL_DEBUG
+#if 0
   printf ("G = \n");
   for (i = 0; i < nv; ++i)
     {
@@ -287,6 +325,16 @@ graph_spectrum (float *spectrum, float *fiedler,
         printf (" %-4.5f", gsl_matrix_get (A, i, j));
       printf ("\n");
     }
+#else
+  printf ("G = [");
+  for (i = 0; i < nv; ++i)
+    {
+      for (j = 0; j < nv; ++j)
+        printf (" %-4.5f", gsl_matrix_get (A, i, j));
+      printf (";\n");
+    }
+  printf ("]\n");
+#endif
 #endif
   
   gsl_eigen_symmv (A, L, V, ws);
@@ -325,11 +373,12 @@ graph_spectrum (float *spectrum, float *fiedler,
 #elif defined(HAVE_MKL)
 
 static int
-graph_spectrum (float *spectrum, float *fiedler,
-                const int *G, int nv, size_t size)
+graph_spectrum (float *spectrum, float *fiedler, const graph_t *g)
 {
   double *a, *d;
-  int i, j, v, err = 0;
+  const int *G = g->A;
+  size_t size = g->size;
+  int i, j, v, err = 0, nv = g->nv;
 
   a = malloc (sizeof (double)*nv*nv);
   d = malloc (nv *sizeof (double));
@@ -395,12 +444,13 @@ graph_spectrum (float *spectrum, float *fiedler,
 #else
 
 static int
-graph_spectrum (float *spectrum, float *fiedler,
-                const int *G, int nv, size_t size)
+graph_spectrum (float *spectrum, float *fiedler, const graph_t *g)
 {
   double **evec, **a, *d;
-  int i, err = 0;
-
+  int i, err = 0, nv = g->nv;
+  const int *G = g->A;
+  size_t size = g->size;
+  
   a = malloc (sizeof (double *)*nv);
   d = malloc (sizeof (double)*nv);
   evec = malloc (sizeof (double *)*nv);
@@ -545,23 +595,384 @@ parse_inchi_graph (int **pG, size_t *psize, char *inchi, char errmsg[])
   return nv;
 }
 
+static formula_t *
+create_formula (int index, int multiplier, int count, const element_t *el)
+{
+  formula_t *f = malloc (sizeof (formula_t));
+  f->index = index;
+  f->multiplier = multiplier;
+  f->count = count;
+  f->element = el;
+  f->next = 0;
+  return f;
+}
+
+static void
+destroy_formula (formula_t *f)
+{
+  while (f != 0)
+    {
+      formula_t *next = f->next;
+      free (f);
+      f = next;
+    }
+}
+
+static int
+parse_formula (formula_t **formula, char *err, const char *inchi)
+{
+  char *p = strchr (inchi, '/');
+  const element_t *el = 0;
+  int count = 0, multi = 1, index = 0, total = 0;
+  formula_t *current = 0, *head = 0;
+
+  if (p == 0)
+    {
+      *formula = 0;
+      return 0;
+    }
+  
+  ++p; /* skip over / */
+  while (*p != '/')
+    {
+      if (isalpha (*p))
+        {
+          if (el != 0)
+            {
+              formula_t *f = create_formula (index, multi, count, el);
+              if (current != 0)
+                current->next = f;
+              else
+                head = f;
+              current = f;
+              total += multi*count;
+            }
+          
+          el = element_lookup_symbol (p);
+          if (el != 0)
+            {
+              count = 1;
+              p += strlen (el->symbol);
+            }
+          else
+            {
+              sprintf (err,
+                       "** Unknown atom in formula at position %ld: %s **\n",
+                       p - inchi, p);
+              el = 0;
+              count = 0;
+              multi = 1;
+              ++p;
+            }
+        }
+      else if (isdigit (*p))
+        {
+          /* number */
+          count = (int) strtol (p, &p, 10);
+          if (el == 0)
+            {
+              /* multiplicity.. */
+              multi = count;
+            }
+        }
+      else if (*p == '.')
+        {
+          if (el != 0)
+            {
+              formula_t *f = create_formula (index, multi, count, el);
+              if (current != 0)
+                current->next = f;
+              else
+                head = f;
+              current = f;
+              total += multi*count;
+            }
+          el = 0;
+          count = 0;
+          multi = 1;
+          ++index;
+          ++p;
+        }
+      else
+        sprintf (err, "** Uknown character in formula: %c **\n", *p);
+    }
+  
+  if (el != 0)
+    {
+      formula_t *f = create_formula (index, multi, count, el);
+      if (current != 0)
+        current->next = f;
+      else
+        head = f;
+      total += multi*count;
+    }
+  *formula = head;
+  
+  return total;
+}
+
+static hlayer_t *
+create_hlayer (int index, int atom)
+{
+  hlayer_t *h = malloc (sizeof (hlayer_t));
+  h->index = index;
+  h->atom = atom;
+  h->count = 0;
+  h->group = 0;
+  h->element = 0;
+  h->next = 0;
+  return h;
+}
+
+static void
+destroy_hlayer (hlayer_t *h)
+{
+  while (h != 0)
+    {
+      hlayer_t *next = h->next;
+      free (h);
+      h = next;
+    }
+}
+
+static int
+parse_layer_h (hlayer_t **hlayer, char *err, const char *inchi)
+{
+  char *p = strstr (inchi, "/h");
+  int pn = 0, n, count, group = 0, shared = 0, index = 0, total = 0;
+  hlayer_t *head = 0, *current = 0;
+  
+  if (p == 0)
+    {
+      *hlayer = 0;
+      return 0;
+    }
+
+  p += 2; /* skip over /h */
+  while (*p != '/' && *p != '\0')
+    {
+      switch (*p)
+        {
+        case '1': case '2': case '3':
+        case '4': case '5': case '6':
+        case '7': case '8': case '9':
+          n = strtol (p, &p, 10);
+          if (n > 0)
+            {
+              if (*p != '*')
+                {
+                  hlayer_t *h = create_hlayer (index, n);
+                  if (shared)
+                    {
+                      h->count = count;
+                      h->group = group;
+                    }
+                  
+                  if (head == 0)
+                    head = h;
+                  else
+                    current->next = h;
+                  current = h;
+                  ++total;
+                }
+              else
+                sprintf (err, "** Warning: ignore multiplicity %d "
+                         "in /h layer **\n", n);
+            }
+          break;
+
+        case '-':
+          pn = n;
+          n = strtol (p+1, &p, 10);
+          if (n > 0 && pn > 0)
+            { int p = pn+1;
+              for (; p <= n; ++p)
+                {
+                  hlayer_t *h = create_hlayer (index, p);
+                  if (head == 0)
+                    head = h;
+                  else
+                    current->next = h;
+                  current = h;
+                  ++total;
+                }
+              pn = 0;
+            }
+          else
+            {
+              sprintf (err, "** Invalid range in /h layer: %d-%d **\n",
+                       pn, n);
+            }
+          break;
+
+        case ',':
+          ++p;
+          break;
+
+        case '(':
+          shared ^= 1; /* toggel parity */
+          ++group;
+          ++p;
+          break;
+          
+        case ')':
+          shared ^= 1;
+          ++p;
+          break;
+
+        case 'H':
+          count = 1;
+          if (isdigit (p[1]))
+            count = strtol (p+1, &p, 10);
+          else
+            ++p;
+
+          if (!shared)
+            {
+              hlayer_t *h = head;
+              while (h != 0)
+                {
+                  if (h->count == 0)
+                    h->count = count;
+                  h = h->next;
+                }
+            }
+          break;
+
+        case '*': /* multiplicity (ignore for now) */
+          ++p;
+          break;
+          
+        case ';': /* component */
+          ++index;
+          ++p;
+          break;
+
+        default:
+          sprintf (err, "** Warning: unknown character in /h layer: '%c'\n",
+                   *p);
+          ++p;
+        }
+    } /* while() */
+
+  *hlayer = head;
+  return total;
+}
+
+static vertex_t *
+create_vertex (int index, int degree)
+{
+  vertex_t *v = malloc (sizeof (vertex_t) + sizeof (vertex_t*)*degree);
+  v->index = index;
+  v->degree = degree;
+  v->hcount = 0;
+  v->charge = 0;
+  v->atom = 0;
+  v->neighbors = (vertex_t **)((char *)v + sizeof (vertex_t));
+  (void) memset (v->neighbors, 0, degree*sizeof (vertex_t *));
+  return v;
+}
+
+static void
+destroy_vertex (vertex_t *v)
+{
+  if (v != 0)
+    free (v);
+}
+
+static void
+destroy_graph (graph_t *g)
+{
+  if (g->A != 0)
+    free (g->A);
+  if (g->G != 0)
+    {
+      int i;
+      for (i = 0; i < g->nv; ++i)
+        destroy_vertex (g->G[i]);
+      free (g->G);
+    }
+  destroy_formula (g->formula);
+  destroy_hlayer (g->hlayer);
+}
+
+static void
+process_graph (graph_t *g)
+{
+  int i, j, *G = g->A;
+  size_t size = g->size;
+  
+  g->G = malloc (sizeof (vertex_t *) * g->nv);
+  /* first pass to allocate the vertices */
+  for (i = 0; i < g->nv; ++i)
+    {
+      int d = 0;
+      for (j = 0; j < g->nv; ++j)
+        if (i != j && __get_edge (i+1, j+1))
+          ++d;
+      g->G[i] = create_vertex (i+1, d);
+    }
+  
+  /* now do the linking */
+  printf ("graph G for component %d...%d\n", g->index, g->nv);
+  for (i = 0; i < g->nv; ++i)
+    {
+      int k = 0, valence;
+      vertex_t *u = g->G[i];
+      for (j = 0; j < g->nv; ++j)
+        if (i != j && __get_edge (i+1, j+1))
+          u->neighbors[k++] = g->G[j];
+
+      printf ("%d %d:", u->index, u->hcount);
+      for (k = 0; k < u->degree; ++k)
+        printf (" %d", u->neighbors[k]->index);
+      printf ("\n");
+    }
+}
+
 static int
 spectral_inchi (spectral_t *sp, const char *inchi)
 {
-  char *ptr, *start = strstr (inchi, "/c"), *end;
-  int nv = 0, *G = 0, *pG = 0;
+  char *ptr, *start, *end;
+  int *pG = 0, n;
   size_t size = 0, psize = 0;
+  graph_t g = {0};
 
   if (strncmp ("InChI=", inchi, 6) != 0)
     {
-      sprintf (sp->errmsg, "Inchi string doesn't begins with InChI=");
+      sprintf (sp->errmsg, "Inchi string doesn't begin with InChI=");
       return -1;
     }
-  else if (start == 0)
+
+  start = strstr (inchi, "/c");
+  if (start == 0)
     {
       sprintf (sp->errmsg, "InChI string doesn't have connection layer");
       return 0;
     }
+
+  /* parse formula */
+  n = parse_formula (&g.formula, sp->errmsg, inchi);
+  { formula_t *formula = g.formula;
+    printf ("formula: %d\n", n);
+    while (formula != 0)
+      {
+        printf ("%d %d: %d %s\n", formula->index, formula->multiplier,
+                formula->count, formula->element->symbol);
+        formula = formula->next;
+      }
+  }
+  
+  /* parse h layer */
+  n = parse_layer_h (&g.hlayer, sp->errmsg, inchi);
+  { hlayer_t *h = g.hlayer;
+    printf ("/h layer...%d\n", n);
+    while (h != 0)
+      {
+        printf ("%d %d %d %d\n", h->index, h->atom, h->count, h->group);
+        h = h->next;
+      }
+  }
 
   ptr = start + 2; /* skip over /c */
   for (end = ptr; *end != '/' && !isspace (*end) && *end != '\0'; ++end)
@@ -572,22 +983,28 @@ spectral_inchi (spectral_t *sp, const char *inchi)
   (void) strncpy (start, ptr, size);
   start[size] = '\0';
 
-  size = 0;
   ptr = start;
   for (ptr = strtok_r (ptr, ";", &end); 
        ptr != 0; ptr = strtok_r (0, ";", &end))
     {
-      int n = parse_inchi_graph (&pG, &psize, ptr, sp->errmsg);
-      if (n > nv)
+      n = parse_inchi_graph (&pG, &psize, ptr, sp->errmsg);
+      if (n > g.nv)
         {
-          if (G != 0)
-            free (G);
+          /* keep only the largest component */
+          if (g.A != 0)
+            free (g.A);
 
-          G = pG;
-          size = psize;
-          nv = n;
+          g.A = pG;
+          g.nv = n;
+          g.size = psize;
+          g.index = 0;
 
           { char *p = ptr;
+            for (; p >= start; --p)
+              if (*p == ';')
+                ++g.index;
+
+            p = ptr;
             while (*p != '\0' && *p != '*')
               ++p;
 
@@ -595,6 +1012,7 @@ spectral_inchi (spectral_t *sp, const char *inchi)
             if (*p == '*')
               ptr = ++p;
           }
+
           psize = strlen (ptr);
           if (psize > sp->isize)
             {
@@ -612,33 +1030,34 @@ spectral_inchi (spectral_t *sp, const char *inchi)
   if (pG != 0)
     free (pG);
 
-  if (nv > SPECTRAL_MAXG)
+  if (g.nv > SPECTRAL_MAXG)
     {
       sprintf (sp->errmsg, "Graph is too large (%d > %d) for eigensolver",
-               nv, SPECTRAL_MAXG);
-      nv = -1;
+               g.nv, SPECTRAL_MAXG);
+      g.nv = -1;
     }
   else
     {
-      if (sp->bsize < nv)
+      if (sp->bsize < g.nv)
         {
-          sp->spectrum = realloc (sp->spectrum, nv*sizeof (float));
-          sp->fiedler = realloc (sp->fiedler, nv*sizeof (float));
-          sp->bsize = nv;
+          sp->spectrum = realloc (sp->spectrum, g.nv*sizeof (float));
+          sp->fiedler = realloc (sp->fiedler, g.nv*sizeof (float));
+          sp->bsize = g.nv;
         }
 #ifdef SPECTRAL_DEBUG
       printf ("## /c = %s\n", sp->inchi_c);
 #endif
-      if (graph_spectrum (sp->spectrum, sp->fiedler, G, nv, size) < 0)
+      process_graph (&g);
+      if (graph_spectrum (sp->spectrum, sp->fiedler, &g) < 0)
         {
           sprintf (sp->errmsg, "Eigensolver didn't converge within "
                    "specified number of iterations");
-          nv = -1;
+          g.nv = -1;
         }
     }
-  free (G);
+  destroy_graph (&g);
 
-  return nv;
+  return g.nv;
 }
 
 #undef __set_edge
