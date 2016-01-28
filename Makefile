@@ -1,7 +1,7 @@
 ## Please consider using either Makefile.gsl or Makefile.mkl
 ## The bundled eigensolver is really for demonstration only!
 SUFFIX =
-CC = gcc
+CC = clang
 
 # uncomment to compile debug
 DEBUG=-g #-DSPECTRAL_DEBUG

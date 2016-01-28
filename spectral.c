@@ -41,7 +41,6 @@ for completeness sake. ****"
 
 typedef struct __formula_s {
   int index; /* this is not the same the component index */
-  int multiplier;
   int count;
   const element_t *element;
   struct __formula_s *next;
@@ -67,6 +66,7 @@ typedef struct __vertex_s {
 
 typedef struct __graph_s {
   int index; /* component index */
+  int multiplier; /* multiplicity */
   int nv; /* number of vertices */
   int *A; /* adjacency matrix */
   vertex_t **G; /* adjacency list G[0..nv-1] */
@@ -596,11 +596,10 @@ parse_inchi_graph (int **pG, size_t *psize, char *inchi, char errmsg[])
 }
 
 static formula_t *
-create_formula (int index, int multiplier, int count, const element_t *el)
+create_formula (int index, int count, const element_t *el)
 {
   formula_t *f = malloc (sizeof (formula_t));
   f->index = index;
-  f->multiplier = multiplier;
   f->count = count;
   f->element = el;
   f->next = 0;
@@ -616,6 +615,42 @@ destroy_formula (formula_t *f)
       free (f);
       f = next;
     }
+}
+
+static int
+update_formula (formula_t **head, formula_t **current,
+                int *index, int multi, int count, const element_t *el)
+{
+  formula_t *f = create_formula (*index, count, el);
+  if (*current != 0)
+    (*current)->next = f;
+  else
+    *head = f;
+  *current = f;
+  
+  /* expand */
+  if (multi > 1)
+    {
+      int k;
+      formula_t *h = *head;
+      while (h->index != *index)
+        h = h->next;
+      
+      for (k = 1; k < multi; ++k)
+        {
+          formula_t *p = h;
+          ++*index;
+          while (p->index == h->index)
+            {
+              f = create_formula (*index, p->count, p->element);
+              (*current)->next = f;
+              *current = f;
+              p = p->next;
+            }
+        }
+    }
+  
+  return multi*count;
 }
 
 static int
@@ -639,7 +674,7 @@ parse_formula (formula_t **formula, char *err, const char *inchi)
         {
           if (el != 0)
             {
-              formula_t *f = create_formula (index, multi, count, el);
+              formula_t *f = create_formula (index, count, el);
               if (current != 0)
                 current->next = f;
               else
@@ -679,13 +714,8 @@ parse_formula (formula_t **formula, char *err, const char *inchi)
         {
           if (el != 0)
             {
-              formula_t *f = create_formula (index, multi, count, el);
-              if (current != 0)
-                current->next = f;
-              else
-                head = f;
-              current = f;
-              total += multi*count;
+              total += update_formula (&head, &current,
+                                       &index, multi, count, el);
             }
           el = 0;
           count = 0;
@@ -699,12 +729,7 @@ parse_formula (formula_t **formula, char *err, const char *inchi)
   
   if (el != 0)
     {
-      formula_t *f = create_formula (index, multi, count, el);
-      if (current != 0)
-        current->next = f;
-      else
-        head = f;
-      total += multi*count;
+      total += update_formula (&head, &current, &index, multi, count, el);
     }
   *formula = head;
   
@@ -899,8 +924,10 @@ destroy_graph (graph_t *g)
 static void
 process_graph (graph_t *g)
 {
-  int i, j, *G = g->A;
+  int i, j, count, total, *G = g->A;
   size_t size = g->size;
+  formula_t *f = g->formula;
+  hlayer_t *h;
   
   g->G = malloc (sizeof (vertex_t *) * g->nv);
   /* first pass to allocate the vertices */
@@ -913,8 +940,36 @@ process_graph (graph_t *g)
       g->G[i] = create_vertex (i+1, d);
     }
   
+  /* align the formula with the component; this doesn't seem to be a clean
+   * or right way to do this??  */
+  while (f->index < g->index)
+    f = f->next;
+
+  count = 0;
+  {
+    formula_t *current = f;
+    int index = f->index;
+    while (f != 0 && index == f->index)
+      {
+        if (f->element->atno != 1)
+          count += f->count;
+        f = f->next;
+      }
+    f = current;
+  }
+  
+  if (count != g->nv)
+    printf ("** formula misaligned with component: expecting %d but got %d!\n",
+            g->nv, count);
+  
+  printf ("graph G for component %d...%d x %d => formula %d\n",
+          g->index, g->multiplier, g->nv, f->index);
+  
   /* now do the linking */
-  printf ("graph G for component %d...%d\n", g->index, g->nv);
+  if (f->element->atno == 1)
+    f = f->next;
+  
+  count = f->count;
   for (i = 0; i < g->nv; ++i)
     {
       int k = 0, valence;
@@ -923,10 +978,40 @@ process_graph (graph_t *g)
         if (i != j && __get_edge (i+1, j+1))
           u->neighbors[k++] = g->G[j];
 
-      printf ("%d %d:", u->index, u->hcount);
+      u->atom = f->element;
+      for (h = g->hlayer; h != 0; h = h->next)
+        if (h->atom == u->index)
+          {
+            if (h->group > 0)
+              {
+                /* shared; ensure that only the smallest index get the H */
+                hlayer_t *hl = g->hlayer;
+                while (hl->group != h->group)
+                  hl = hl->next;
+                
+                if (hl == h)
+                  u->hcount = h->count;
+              }
+            else
+              u->hcount = h->count;
+          }
+
+      printf ("%d %d %s:", u->index, u->hcount, u->atom->symbol);
       for (k = 0; k < u->degree; ++k)
         printf (" %d", u->neighbors[k]->index);
       printf ("\n");
+
+      if (--count == 0)
+        {
+          f = f->next;
+          if (f != 0)
+            {
+              /* don't include Hs */
+              if (f->element->atno == 1)
+                f = f->next;
+              count = f->count;
+            }
+        }
     }
 }
 
@@ -957,7 +1042,7 @@ spectral_inchi (spectral_t *sp, const char *inchi)
     printf ("formula: %d\n", n);
     while (formula != 0)
       {
-        printf ("%d %d: %d %s\n", formula->index, formula->multiplier,
+        printf ("%d: %d %s\n", formula->index,
                 formula->count, formula->element->symbol);
         formula = formula->next;
       }
@@ -1001,15 +1086,15 @@ spectral_inchi (spectral_t *sp, const char *inchi)
 
           { char *p = ptr;
             for (; p >= start; --p)
-              if (*p == ';')
+              if (*p == ';' || *p == '\0')
                 ++g.index;
 
             p = ptr;
-            while (*p != '\0' && *p != '*')
-              ++p;
-
-            /* don't retain the multiplicity character from the /c layer */
-            if (*p == '*')
+            g.multiplier = strtol (p, &p, 10);
+            if (*p != '*')
+              g.multiplier = 1;
+            else
+              /* don't retain the multiplicity character from the /c layer */
               ptr = ++p;
           }
 
