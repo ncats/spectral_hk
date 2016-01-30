@@ -7,7 +7,6 @@
 
 #include "sha1.h"
 #include "b32.h"
-#include "interval.h"
 #include "spectral.h"
 #include "periodic.h"
 
@@ -61,15 +60,45 @@ typedef struct __vertex_s {
   int hcount;
   int charge;
   const element_t *atom;
-  struct __vertex_s **neighbors; /* neighbors[0..degree-1] */
+  struct __edge_s **edges; /* edges[0..degree-1] */
 } vertex_t;
+
+typedef struct __edge_s {
+  int index;
+  int order;
+  vertex_t *u;
+  vertex_t *v;
+  struct __edge_s *next;
+} edge_t;
 
 typedef struct __graph_s {
   int index; /* component index */
   int multiplier; /* multiplicity */
-  int nv; /* number of vertices */
+  
+#ifdef __A
+# undef __A
+#endif
+#define __A(i,j) (g->A[(i)*g->size+(j)])
   int *A; /* adjacency matrix */
-  vertex_t **G; /* adjacency list G[0..nv-1] */
+
+#ifdef __L
+# undef __L
+#endif
+#define __L(i,j) (g->L[(i)*g->size+(j)])
+  double *L; /* normalized Laplacian: use macro __L for access */
+
+#ifdef __W
+# undef __W
+#endif
+#define __W(i,j) (g->W[(i)*g->size+(j)])
+  double *W; /* weighted normalized Laplacian */
+  
+  int nv; /* number of vertices */
+  vertex_t **V; /* adjacency list V[0..nv-1] */
+
+  int ne; /* number of edges */
+  edge_t *E; /* linked list of edges */
+  
   size_t size; /* stride size */
   formula_t *formula;
   hlayer_t *hlayer;
@@ -82,12 +111,6 @@ typedef struct __graph_s {
 #ifndef SPECTRAL_MAXG
 # define SPECTRAL_MAXG 5000
 #endif
-
-/*
- * predefined precision; careful changing this value will affect
- * the hashkey!
- */
-#define ROUND_OFF 0.0005
 
 #define __set_edge(i,j) G[(i)*size+(j)] = G[(j)*size+(i)] = 1
 #define __get_edge(i,j) G[(i)*size+(j)]
@@ -103,52 +126,11 @@ struct __spectral_s
   char *inchi_c; /* connection layer */
   size_t isize; /* connection buffer size */
   sha1_t *sha1; /* sha1 hash */
-  interval_t *itree; /* interval tree for quantization */
   unsigned char digest[20]; /* digest buffer */
   char hashkey[31]; /* 9(topology) + 10(connection) + 11(full) */
   char errmsg[BUFSIZ];
 };
 
-
-static void
-__digest_spectrum (spectral_t *sp, int size)
-{
-  unsigned int uv;
-  unsigned char data[4];
-  int i = 0;
-
-#ifdef SPECTRAL_DEBUG
-  printf ("## Eigen values:\n");
-  { double p = 0.;
-    for (; i < size; ++i)
-      {
-        printf ("%3d: %.10f %.10f %.10f\n", 
-                i, sp->spectrum[i], sp->spectrum[i] - p, 
-                sp->spectrum[i]/sp->spectrum[1]);
-        p = sp->spectrum[i];
-      }
-  }
-  printf ("## Encoded values:\n");
-  i = 0;
-#endif
-
-  /* skip over all disconnected components */
-  while (i < size && sp->spectrum[++i] < EPS)
-    ;
-
-  for (; i < size; ++i)
-    {
-      uv = interval_encode32 (sp->itree, sp->spectrum[i], ROUND_OFF);
-#ifdef SPECTRAL_DEBUG
-      printf ("%3d: %.10f => %u\n", i, sp->spectrum[i], uv);
-#endif
-      data[0] = uv >> 24;
-      data[1] = (uv & 0x00ffffff) >> 16;
-      data[2] = (uv & 0x0000ffff) >> 8;
-      data[3] = uv & 0xff;
-      sha1_update (sp->sha1, data, sizeof (data));
-    }
-}
 
 static void
 digest_spectrum (spectral_t *sp, int size)
@@ -183,8 +165,7 @@ digest_spectrum (spectral_t *sp, int size)
     {
       uv = (int)(sp->spectrum[j] / sp->spectrum[i] + 0.5);
       x = sp->spectrum[j] < 1. ? 1. - sp->spectrum[j] : sp->spectrum[j] - 1.;
-      printf ("%3d: %.10f => %3u %10u\n", j, sp->spectrum[j], uv, 
-              interval_encode32 (sp->itree, x, ROUND_OFF));
+      printf ("%3d: %.10f => %3u\n", j, sp->spectrum[j], uv);
     }
   }
 #endif
@@ -887,14 +868,14 @@ parse_layer_h (hlayer_t **hlayer, char *err, const char *inchi)
 static vertex_t *
 create_vertex (int index, int degree)
 {
-  vertex_t *v = malloc (sizeof (vertex_t) + sizeof (vertex_t*)*degree);
+  vertex_t *v = malloc (sizeof (vertex_t) + sizeof (edge_t*)*degree);
   v->index = index;
   v->degree = degree;
   v->hcount = 0;
   v->charge = 0;
   v->atom = 0;
-  v->neighbors = (vertex_t **)((char *)v + sizeof (vertex_t));
-  (void) memset (v->neighbors, 0, degree*sizeof (vertex_t *));
+  v->edges = (edge_t **)((char *)v + sizeof (edge_t));
+  (void) memset (v->edges, 0, degree*sizeof (edge_t *));
   return v;
 }
 
@@ -906,40 +887,317 @@ destroy_vertex (vertex_t *v)
 }
 
 static void
-destroy_graph (graph_t *g)
+destroy_edge (edge_t *e)
 {
-  if (g->A != 0)
-    free (g->A);
-  if (g->G != 0)
+  edge_t *next;
+  while (e != 0)
     {
-      int i;
-      for (i = 0; i < g->nv; ++i)
-        destroy_vertex (g->G[i]);
-      free (g->G);
+      next = e->next;
+      free (e);
+      e = next;
     }
-  destroy_formula (g->formula);
-  destroy_hlayer (g->hlayer);
 }
 
 static void
-process_graph (graph_t *g)
+destroy_graph (graph_t *g)
 {
-  int i, j, count, total, *G = g->A;
-  size_t size = g->size;
+  static graph_t def = {0};
+  
+  if (g->A != 0)
+    free (g->A);
+  if (g->V != 0)
+    {
+      int i;
+      for (i = 0; i < g->nv; ++i)
+        destroy_vertex (g->V[i]);
+      free (g->V);
+    }
+  
+  if (g->L != 0)
+    free (g->L);
+
+  if (g->W != 0)
+    free (g->W);
+
+  destroy_edge (g->E);
+  destroy_formula (g->formula);
+  destroy_hlayer (g->hlayer);
+
+  *g = def;
+}
+
+static edge_t *
+create_edge (int index, vertex_t *u, vertex_t *v)
+{
+  edge_t *e = malloc (sizeof (edge_t));
+  e->index = index;
+  e->order = 1;
+  e->u = u;
+  e->v = v;
+  e->next = 0;
+  return e;
+}
+
+static int
+implicit_hcount (const vertex_t *u)
+{
+  int v = 0, k;
+  for (k = 0; k < u->degree; ++k)
+    v += u->edges[k]->order;
+  
+  switch (u->atom->atno)
+    {
+    case 5: v = 3 - v; break;
+    case 6: v = 4 - v; break;
+    case 7: case 15:
+      if (v <= 3) v = 3 - v;
+      else v = 5 - v;
+      break;
+    case 8: v = 2 - v; break;
+    case 9: v = 1 - v; break;
+    case 16:
+      if (v <= 2) v = 2 - v;
+      /*else if (v <= 4) v = 4 - v;*/
+      else v = 6 - v;
+      break;
+    case 17: v = 1 - v; break;
+    case 35: case 53: v = 1 - v; break;
+    default: v = -1000;
+    }
+  
+  return v;
+}
+
+static vertex_t *
+edge_other (const edge_t *e, const vertex_t *v)
+{
+  return e->u == v ? e->v : e->u;
+}
+
+static void
+_edge_closure (int *visited, vertex_t *u, edge_t **edge,
+               vertex_t **const *neighbors, graph_t *g)
+{
+  if (!visited[u->index])
+    {
+      int k;
+
+      visited[u->index] = 1;
+      for (k = 0; k < u->degree; ++k)
+        {
+          vertex_t *v = neighbors[u->index][k];
+          if (*edge == 0 || (*edge != 0 && (*edge)->u != v))
+            {
+              edge_t *e = g->E;
+              /* not very efficient here.. */
+              while (e != 0)
+                {
+                  /* make sure we don't have an edge in the 
+                   * opposite direction */
+                  if (e->u == v && e->v == u)
+                    break;
+                  e = e->next;
+                }
+              
+              if (e == 0)
+                {
+                  e = create_edge (++g->ne, u, v);
+                  if (*edge != 0)
+                    (*edge)->next = e;
+                  else
+                    g->E = e;
+                  *edge = e;
+                  
+                  _edge_closure (visited, v, edge, neighbors, g);
+                }
+            }
+        }
+    }
+}
+
+static void
+vertex_add_edge (vertex_t *v, edge_t *edge)
+{
+  int k = 0;
+  for (; k < v->degree; ++k)
+    if (v->edges[k] == 0)
+      break;
+  
+  if (k == v->degree)
+    fprintf (stderr, "** Error: vertex %d is already filled! **\n", v->index);
+  else
+    v->edges[k] = edge;
+}
+
+static void
+edge_closure (vertex_t **const *neighbors, graph_t *g)
+{
+  int *visited = malloc ((g->nv+1)*sizeof (int));
+  edge_t *edge = 0;
+    
+  (void) memset (visited, 0, (g->nv+1)*sizeof (int));
+  _edge_closure (visited, g->V[0], &edge, neighbors, g);
+  free (visited);
+
+  edge = g->E;
+  while (edge != 0)
+    {
+      vertex_t *u = edge->u, *v = edge->v;
+      vertex_add_edge (u, edge);
+      vertex_add_edge (v, edge);
+      edge = edge->next;
+    }
+}
+
+static void
+_edge_order_assignment (const vertex_t *u, short *vertices, short *edges)
+{
+  int k;
+
+  vertices[u->index] = 1;
+  for (k = 0; k < u->degree; ++k)
+    {
+      edge_t *e = u->edges[k];
+      if (!edges[e->index])
+        {
+          vertex_t *v = edge_other (e, u);
+          if (implicit_hcount (u) > u->hcount)
+            e->order += implicit_hcount (v) - v->hcount;
+          edges[e->index] = 1;
+          _edge_order_assignment (v, vertices, edges);
+        }
+    }
+}
+
+static void
+edge_order_assignment (graph_t *g)
+{
+  edge_t *e;
+  short *vertices = malloc (sizeof (short) * (g->nv+1));
+  short *edges = malloc (sizeof (short) * (g->ne+1));
+  int hcount, k = 0, h, i;
+  
+  do
+    {
+      (void) memset (vertices, 0, sizeof (short) * (g->nv+1));
+      (void) memset (edges, 0, sizeof (short) * (g->ne+1));
+      for (e = g->E; e != 0; e = e->next)
+        e->order = 1;
+      
+      _edge_order_assignment (g->V[k], vertices, edges);
+      
+      hcount = 0;
+      for (i = 0; i < g->nv; ++i)
+        {
+          h = implicit_hcount (g->V[i]) - g->V[i]->hcount;
+          if (h == 1)
+            {
+              switch (g->V[i]->atom->atno)
+                {
+                case 8:
+                  if (g->V[i]->degree == 1)
+                    {
+                      --g->V[i]->charge;
+                      h = 0;
+                    }
+                  break;
+                  
+                case 7:
+                  if (g->V[i]->degree == 4)
+                    {
+                      ++g->V[i]->charge;
+                      h = 0;
+                    }
+                  break;
+                }
+            }
+          hcount += h;
+        }
+      printf ("V = %d => hcount = %d\n", g->V[k]->index, hcount);
+      ++k;
+    }
+  while (hcount > 0 && k < g->nv);
+  
+  printf ("E[%d] = \n", g->ne);
+  for (e = g->E; e != 0; e = e->next)
+    { vertex_t *u = e->u, *v = e->v;
+      printf ("%d: %d %c %d\n", e->index, u->index,
+              e->order == 1 ? '-' : '=', v->index);
+    }
+  
+  if (hcount > 0)
+    {
+      fprintf (stderr, "** Warning: something is rotten in the state of MD; "
+               "%d extra hydrogens left without a home! **\n", hcount);
+    }
+  
+  free (vertices);
+  free (edges);
+}
+
+static void
+create_graph_L (vertex_t **const *neighbors, graph_t *g)
+{
+  /* index of L and W are 1-base */
+  int i, k;
+  vertex_t *u, *v;
+  size_t size = sizeof (double)*g->size * (g->nv+1);
+
+  g->L = malloc (size);
+  (void) memset (g->L, 0, size);
+
+  printf ("L = [");  
+  for (i = 0; i < g->nv; ++i)
+    {
+      u = g->V[i];
+      __L(u->index, u->index) = 1.;
+      for (k = 0; k < u->degree; ++k)
+        {
+          v = neighbors[u->index][k];
+          __L(u->index, v->index) = __L(v->index, u->index)
+            =  -1./sqrt ((double)u->degree * v->degree);
+        }
+      
+      for (k = 1; k <= g->nv; ++k)
+        printf (" %-4.5f", __L(i+1, k));
+      
+      printf (";\n");
+    }
+  printf ("]\n");
+}
+
+static void
+create_graph_W (vertex_t **const *neighbors, graph_t *g)
+{
+  size_t size = sizeof (double)*g->size * (g->nv+1);
+  g->W = malloc (size);
+  (void) memset (g->W, 0, size);
+  
+}
+
+static void
+instrument_graph (graph_t *g)
+{
+  int i, j, count;
   formula_t *f = g->formula;
   hlayer_t *h;
+  vertex_t ***neighbors;
+
+  neighbors = malloc (sizeof (vertex_t **) * (g->nv+1));
+  neighbors[0] = 0;
   
-  g->G = malloc (sizeof (vertex_t *) * g->nv);
+  g->V = malloc (sizeof (vertex_t *) * g->nv);
   /* first pass to allocate the vertices */
   for (i = 0; i < g->nv; ++i)
     {
       int d = 0;
       for (j = 0; j < g->nv; ++j)
-        if (i != j && __get_edge (i+1, j+1))
+        if (i != j && __A(i+1, j+1))
           ++d;
-      g->G[i] = create_vertex (i+1, d);
+      neighbors[i+1] = malloc (d * sizeof (vertex_t *));
+      g->V[i] = create_vertex (i+1, d);
     }
-  
+
   /* align the formula with the component; this doesn't seem to be a clean
    * or right way to do this??  */
   while (f->index < g->index)
@@ -959,24 +1217,28 @@ process_graph (graph_t *g)
   }
   
   if (count != g->nv)
-    printf ("** formula misaligned with component: expecting %d but got %d!\n",
-            g->nv, count);
+    fprintf (stderr, "** Formula misaligned with component: "
+             "expecting %d atoms but got %d! **\n", g->nv, count);
   
-  printf ("graph G for component %d...%d x %d => formula %d\n",
-          g->index, g->multiplier, g->nv, f->index);
-  
-  /* now do the linking */
+  printf ("graph G for component %d/%d => formula %d\n",
+            g->index, g->multiplier, f->index);
+    
   if (f->element->atno == 1)
     f = f->next;
-  
+
+  /*
+   * instrument vertices
+   */
   count = f->count;
   for (i = 0; i < g->nv; ++i)
     {
-      int k = 0, valence;
-      vertex_t *u = g->G[i];
+      int k = 0;
+      vertex_t *u = g->V[i];
+      
+      /* now do the linking */
       for (j = 0; j < g->nv; ++j)
-        if (i != j && __get_edge (i+1, j+1))
-          u->neighbors[k++] = g->G[j];
+        if (i != j && __A(i+1, j+1))
+          neighbors[u->index][k++] = g->V[j];
 
       u->atom = f->element;
       for (h = g->hlayer; h != 0; h = h->next)
@@ -984,23 +1246,16 @@ process_graph (graph_t *g)
           {
             if (h->group > 0)
               {
-                /* shared; ensure that only the smallest index get the H */
-                hlayer_t *hl = g->hlayer;
-                while (hl->group != h->group)
-                  hl = hl->next;
-                
-                if (hl == h)
+                /* shared; ensure that only the largest index get the H */
+                if (h->next == 0 || h->next->group != h->group)
                   u->hcount = h->count;
               }
             else
               u->hcount = h->count;
+            
+            break;
           }
-
-      printf ("%d %d %s:", u->index, u->hcount, u->atom->symbol);
-      for (k = 0; k < u->degree; ++k)
-        printf (" %d", u->neighbors[k]->index);
-      printf ("\n");
-
+      
       if (--count == 0)
         {
           f = f->next;
@@ -1013,6 +1268,44 @@ process_graph (graph_t *g)
             }
         }
     }
+
+  /* instrument edges */
+  edge_closure (neighbors, g);
+
+  /* now adjust the order */
+  edge_order_assignment (g);
+  
+  printf ("V[%d] = \n", g->nv);
+  for (i = 0; i < g->nv; ++i)
+    {
+      int k;
+      vertex_t *u = g->V[i];
+      
+      if (u->hcount > 0)
+        printf ("%d %s[H%d]:", u->index, u->atom->symbol,  u->hcount);
+      else
+        printf ("%d %s:", u->index, u->atom->symbol);
+      
+      for (k = 0; k < u->degree; ++k)
+        printf (" %d", neighbors[u->index][k]->index);
+      
+      printf ("  -- edges");
+      for (k = 0; k < u->degree; ++k)
+        { edge_t *e = u->edges[k];
+            printf (" %d[%d,%d]", e->index, e->u->index, e->v->index);
+        }
+        printf ("\n");
+    }
+  
+#if 0
+  create_graph_L (neighbors, g);
+  create_graph_W (neighbors, g);
+#endif
+  
+  for (i = 1; i < g->nv; ++i)
+    if (neighbors[i] != 0)
+      free (neighbors[i]);
+  free (neighbors);
 }
 
 static int
@@ -1119,10 +1412,11 @@ spectral_inchi (spectral_t *sp, const char *inchi)
     {
       sprintf (sp->errmsg, "Graph is too large (%d > %d) for eigensolver",
                g.nv, SPECTRAL_MAXG);
-      g.nv = -1;
+      n = -1;
     }
   else
     {
+      n = g.nv;
       if (sp->bsize < g.nv)
         {
           sp->spectrum = realloc (sp->spectrum, g.nv*sizeof (float));
@@ -1132,17 +1426,18 @@ spectral_inchi (spectral_t *sp, const char *inchi)
 #ifdef SPECTRAL_DEBUG
       printf ("## /c = %s\n", sp->inchi_c);
 #endif
-      process_graph (&g);
+      
+      instrument_graph (&g);
       if (graph_spectrum (sp->spectrum, sp->fiedler, &g) < 0)
         {
           sprintf (sp->errmsg, "Eigensolver didn't converge within "
                    "specified number of iterations");
-          g.nv = -1;
+          n = -1;
         }
     }
   destroy_graph (&g);
 
-  return g.nv;
+  return n;
 }
 
 #undef __set_edge
@@ -1163,8 +1458,6 @@ spectral_create ()
       (void) memset (sp->hashkey, 0, sizeof (sp->hashkey));
       (void) memset (sp->errmsg, 0, sizeof (sp->errmsg));
       sp->sha1 = sha1_create ();
-      /* eigenvalues of a normalized laplacian is bounded by [0,2] */
-      sp->itree = interval_create (0., 1., 32);
     }
   return sp;
 }
@@ -1181,7 +1474,6 @@ spectral_free (spectral_t *sp)
       if (sp->inchi_c != 0)
         free (sp->inchi_c);
       sha1_free (sp->sha1);
-      interval_free (sp->itree);
       free (sp);
     }
 }
@@ -1270,7 +1562,7 @@ spectral_digest (spectral_t *sp, const char *inchi)
 int
 spectral_ratio (double *ratio, spectral_t *sp, const char *inchi)
 {
-  int i, j, size = spectral_inchi (sp, inchi);
+  int i, size = spectral_inchi (sp, inchi);
   if (size < 0)
     return -1;
 
@@ -1280,12 +1572,14 @@ spectral_ratio (double *ratio, spectral_t *sp, const char *inchi)
     ;
 
 #if 0
-  fprintf (stderr, "pi: %.5f\n", sp->spectrum[6]/sp->spectrum[3]);
-  for (j = i; j < size; ++j)
-    {
-      fprintf (stderr, "%3d: %.5f %.5f\n",
-               j, sp->spectrum[j]/sp->spectrum[i], sp->spectrum[j]);
-    }
+  { int j = i;
+    fprintf (stderr, "pi: %.5f\n", sp->spectrum[6]/sp->spectrum[3]);
+    for (; j < size; ++j)
+      {
+        fprintf (stderr, "%3d: %.5f %.5f\n",
+                 j, sp->spectrum[j]/sp->spectrum[i], sp->spectrum[j]);
+      }
+  }
 #endif
   
   *ratio = sp->spectrum[size-1]/(size*sp->spectrum[i]);
