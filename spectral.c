@@ -60,6 +60,7 @@ typedef struct __vertex_s {
   int hcount;
   int charge;
   const element_t *atom;
+  struct __graph_s *graph;
   struct __edge_s **edges; /* edges[0..degree-1] */
 } vertex_t;
 
@@ -866,7 +867,7 @@ parse_layer_h (hlayer_t **hlayer, char *err, const char *inchi)
 }
 
 static vertex_t *
-create_vertex (int index, int degree)
+create_vertex (graph_t *g, int index, int degree)
 {
   vertex_t *v = malloc (sizeof (vertex_t) + sizeof (edge_t*)*degree);
   v->index = index;
@@ -874,7 +875,8 @@ create_vertex (int index, int degree)
   v->hcount = 0;
   v->charge = 0;
   v->atom = 0;
-  v->edges = (edge_t **)((char *)v + sizeof (edge_t));
+  v->graph = g;  
+  v->edges = (edge_t **)((char *)v + sizeof (vertex_t));
   (void) memset (v->edges, 0, degree*sizeof (edge_t *));
   return v;
 }
@@ -938,6 +940,12 @@ create_edge (int index, vertex_t *u, vertex_t *v)
   return e;
 }
 
+static vertex_t *
+edge_other (const edge_t *e, const vertex_t *v)
+{
+  return e->u == v ? e->v : e->u;
+}
+
 static int
 implicit_hcount (const vertex_t *u)
 {
@@ -955,6 +963,7 @@ implicit_hcount (const vertex_t *u)
       break;
     case 8: v = 2 - v; break;
     case 9: v = 1 - v; break;
+    case 14: v = 4 - v; break;
     case 16:
       if (v <= 2) v = 2 - v;
       /*else if (v <= 4) v = 4 - v;*/
@@ -968,10 +977,479 @@ implicit_hcount (const vertex_t *u)
   return v;
 }
 
-static vertex_t *
-edge_other (const edge_t *e, const vertex_t *v)
+/*
+ * these are from http://cccbdb.nist.gov/
+ */
+static void
+bond_energy_length (const edge_t *e,
+                    double *d /* energy */, double *r /* length */)
 {
-  return e->u == v ? e->v : e->u;
+  const vertex_t *u = e->u->atom->atno < e->v->atom->atno
+    ? e->u : e->v;
+  const vertex_t *v = edge_other (e, u);
+
+  /*
+   * d is kJ/mol
+   * r is pm
+   */
+  if (d != 0) *d = 0;
+  if (r != 0) *r = 1000;
+
+  switch (u->atom->atno)
+    {
+    case 1:
+      switch (v->atom->atno)
+        {
+        case 1: /* H-H */
+          if (d != 0) *d = 432;
+          if (r != 0) *r = 74;
+          break;
+
+        case 5: /* H-B */
+          if (d != 0) *d = 389;
+          if (r != 0) *r = 119;
+          break;
+
+        case 6: /* H-C */
+          if (d != 0) *d = 411;
+          if (r != 0) *r = 109;
+          break;
+
+        case 7: /* H-N */
+          if (d != 0) *d = 386;
+          if (r != 0) *r = 101;
+          break;
+
+        case 8: /* H-O */
+          if (d != 0) *d = 459;
+          if (r != 0) *r = 96;
+          break;
+
+        case 9: /* H-F */
+          if (d != 0) *d = 565;
+          if (r != 0) *r = 92;
+          break;
+
+        case 14: /* H-Si */
+          if (d != 0) *d = 318;
+          if (r != 0) *r = 148;
+          break;
+
+        case 15: /* H-P */
+          if (d != 0) *d = 322;
+          if (r != 0) *r = 144;
+          break;
+
+        case 16: /* H-S */
+          if (d != 0) *d = 363;
+          if (r != 0) *r = 134;
+          break;
+
+        case 17: /* H-Cl */
+          if (d != 0) *d = 428;
+          if (r != 0) *r = 127;
+          break;
+
+        case 35: /* H-Br */
+          if (d != 0) *d = 362;
+          if (r != 0) *r = 141;
+          break;
+          
+        case 53: /* H-I */
+          if (d != 0) *d = 295;
+          if (r != 0) *r = 161;
+        }
+      break;
+
+    case 5:
+      switch (v->atom->atno)
+        {
+        case 5: /* B-B */
+          if (d != 0) *d = 293;
+          if (r != 0) *r = 170.2;
+          break;
+
+        case 6: /* B-C */
+          if (d != 0) *d = 536;
+          if (r != 0) *r = 149.1;
+          break;
+
+        case 9:
+          if (d != 0) *d = 613;
+          if (r != 0) *r = 130.7;
+          break;
+
+        case 17:
+          if (d != 0) *d = 456;
+          if (r != 0) *r = 175;
+          break;
+
+        case 35:
+          if (d != 0) *d = 377;
+          if (r != 0) *r = 188.8;
+          break;
+
+        default:
+          fprintf (stderr, "** Error: No energy/length entries for %s-%s! **\n",
+                   u->atom->symbol, v->atom->symbol);
+        }
+      break;
+
+    case 6:
+      switch (v->atom->atno)
+        {
+        case 6:
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 346;
+              if (r != 0) *r = 154;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 602;
+              if (r != 0) *r = 134;
+            }
+          else if (e->order == 3)
+            {
+              if (d != 0) *d = 835;
+              if (r != 0) *r = 120;
+            }
+          else
+            fprintf (stderr, "** Error: Unknown bond order "
+                     "%d between C and C **\n", e->order);
+          break;
+
+        case 7:
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 305;
+              if (r != 0) *r = 147;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 615;
+              if (r != 0) *r = 129;
+            }
+          else if (e->order == 3)
+            {
+              if (d != 0) *d = 887;
+              if (r != 0) *r = 116;
+            }
+          else
+            fprintf (stderr, "** Error: Unknown bond order "
+                     "%d between C and N **\n", e->order);
+          break;
+
+        case 8:
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 358;
+              if (r != 0) *r = 143;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 799;
+              if (r != 0) *r = 120;
+            }
+          else if (e->order == 3)
+            {
+              if (d != 0) *d = 1072;
+              if (r != 0) *r = 113;
+            }
+          else
+            fprintf (stderr, "** Error: Unknown bond order "
+                     "%d between C and O **\n", e->order);
+          break;
+
+        case 9: /* C-F */
+          if (d != 0) *d = 485;
+          if (r != 0) *r = 135;
+          break;
+
+        case 14: /* C-Si */
+          if (d != 0) *d = 318;
+          if (r != 0) *r = 185;
+          break;
+
+        case 15: /* C-P */
+          if (d != 0) *d = 264;
+          if (r != 0) *r = 184;
+          break;
+
+        case 16: /* C-S */
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 272;
+              if (r != 0) *r = 182;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 573;
+              if (r != 0) *r = 160;
+            }
+          break;
+          
+        case 17: /* C-Cl */
+          if (d != 0) *d = 327;
+          if (r != 0) *r = 177;
+          break;
+
+        case 35: /* C-Br */
+          if (d != 0) *d = 285;
+          if (r != 0) *r = 194;
+
+        case 53: /* C-I */
+          if (d != 0) *d = 213;
+          if (r != 0) *r = 214;
+        }
+      break;
+
+    case 7:
+      switch (v->atom->atno)
+        {
+        case 7: /* N*N */
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 167;
+              if (r != 0) *r = 145;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 418;
+              if (r != 0) *r = 125;
+            }
+          else if (e->order == 3)
+            {
+              if (d != 0) *d = 942;
+              if (r != 0) *r = 110;
+            }
+          break;
+
+        case 8: /* N*O */
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 201;
+              if (r != 0) *r = 140;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 607;
+              if (r != 0) *r = 121;
+            }
+          break;
+
+        case 9: /* N-F */
+          if (d != 0) *d = 283;
+          if (r != 0) *r = 136;
+          break;
+
+        case 14: /* N-Si */
+          if (d != 0) *d = 355;
+          if (r != 0) *r = 157.19;
+          break;
+
+        case 16: /* N=S */
+          if (r != 0) *r = 149.7;
+          break;
+          
+        case 17: /* N-Cl */
+          if (d != 0) *d = 313;
+          if (r != 0) *r = 175;
+          break;
+        }
+      break;
+
+    case 8:
+      switch (v->atom->atno)
+        {
+        case 8:
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 142;
+              if (r != 0) *r = 148;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 494;
+              if (r != 0) *r = 121;
+            }
+          break;
+
+        case 9:
+          if (d != 0) *d = 190;
+          if (r != 0) *r = 142;
+          break;
+
+        case 14:
+          if (d != 0) *d = 452;
+          if (r != 0) *r = 163;
+          break;
+
+        case 15:
+          if (e->order == 1)
+            {
+              if (d != 0) *d = 335;
+              if (r != 0) *r = 163;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 544;
+              if (r != 0) *r = 150;
+            }
+          break;
+
+        case 16:
+          if (e->order == 1)
+            {
+              if (r != 0) *r = 157.4;
+            }
+          else if (e->order == 2)
+            {
+              if (d != 0) *d = 522;
+              if (r != 0) *r = 143;
+            }
+          break;
+
+        case 53:
+          if (d != 0) *d = 201;
+          break;
+        }
+      break;
+
+    case 9:
+      switch (v->atom->atno)
+        {
+        case 9:
+          if (d != 0) *d = 155;
+          if (r != 0) *r = 142;
+          break;
+          
+        case 14:
+          if (d != 0) *d = 565;
+          if (r != 0) *r = 160;
+
+        case 15:
+          if (d != 0) *d = 490;
+          if (r != 0) *d = 154;
+          break;
+
+        case 16:
+          if (d != 0) *d = 284;
+          if (r != 0) *r = 156;
+        }
+      break;
+
+    case 14:
+      switch (v->atom->atno)
+        {
+        case 14:
+          if (d != 0) *d = 222;
+          if (r != 0) *r = 233;
+          break;
+          
+        case 16:
+          if (d != 0) *d = 293;
+          if (r != 0) *r = 200;
+          break;
+
+        case 17:
+          if (d != 0) *d = 381;
+          if (r != 0) *r = 202;
+          break;
+
+        case 35:
+          if (d != 0) *d = 310;
+          if (r != 0) *r = 215;
+          break;
+
+        case 53:
+          if (d != 0) *d = 234;
+          if (r != 0) *r = 243;
+          break;
+        }
+      break;
+      
+    case 15:
+      switch (v->atom->atno)
+        {
+        case 15:
+          if (d != 0) *d = 201;
+          if (r != 0) *r = 221;
+          break;
+          
+        case 16:
+          if (e->order == 2)
+            {
+              if (d != 0) *d = 335;
+              if (r != 0) *r = 186;
+            }
+          break;
+
+        case 17:
+          if (d != 0) *d = 326;
+          if (r != 0) *r = 203;
+          break;
+          
+        case 35:
+          if (d != 0) *d = 264;
+          break;
+
+        case 53:
+          if (d != 0) *d = 184;
+        }
+      break;
+
+    case 16:
+      switch (v->atom->atno)
+        {
+        case 16:
+          if (e->order == 2)
+            {
+              if (d != 0) *d = 425;
+              if (r != 0) *r = 149;
+            }
+          break;
+
+        case 17:
+          if (d != 0) *d = 255;
+          if (r != 0) *r = 207;
+          break;
+        }
+      break;
+
+    case 17:
+      if (v->atom->atno == 17)
+        {
+          if (d != 0) *d = 240;
+          if (r != 0) *r = 199;
+        }
+      else if (v->atom->atno == 53)
+        {
+          if (d != 0) *d = 208;
+          if (r != 0) *r = 232;
+        }
+      break;
+
+    case 35:
+      if (v->atom->atno == 35)
+        {
+          if (d != 0) *d = 190;
+          if (r != 0) *r = 228;
+        }
+      else if (v->atom->atno == 53)
+        {
+          if (d != 0) *d = 175;
+        }
+      break;
+
+    case 53:
+      if (v->atom->atno == 53)
+        {
+          if (d != 0) *d = 148;
+          if (r != 0) *r = 267;
+        }
+      break;
+    }
 }
 
 static void
@@ -1050,89 +1528,199 @@ edge_closure (vertex_t **const *neighbors, graph_t *g)
 }
 
 static void
-_edge_order_assignment (const vertex_t *u, short *vertices, short *edges)
+edge_debug (const graph_t *g)
+{
+  edge_t *e;
+  double r;
+  printf ("E[%d] = \n", g->ne);
+  for (e = g->E; e != 0; e = e->next)
+    { vertex_t *u = e->u, *v = e->v;
+      bond_energy_length (e, 0, &r);
+      printf ("%d: %d %c %d => r = %.0f\n", e->index, u->index,
+              e->order == 1 ? '-' : (e->order == 3 ? '#' : '='), v->index,r);
+    }
+}
+
+static void
+edge_parity (edge_t **edges, int *q, vertex_t *u, short *visited)
 {
   int k;
+  for (k = 0; k < u->degree; ++k)
+    {
+      edge_t *e = u->edges[k];
+      if (!visited[e->index])
+        {
+          vertex_t *v = edge_other (e, u);
+          if (implicit_hcount (u) > u->hcount
+              && implicit_hcount (v) > v->hcount)
+            {
+              edges[(*q)++] = e;
+            }
+          
+          visited[e->index] = 1;
+          edge_parity (edges, q, v, visited);
+        }
+    }
+}
 
-  vertices[u->index] = 1;
+static void
+edge_parity_propagate (const edge_t **edges, int size)
+{
+  int i, j;
+  printf ("edge parity propagate...\n");
+  for (i = 0; i < size; ++i)
+    {
+      const edge_t *e = edges[i];
+      for (j = 0; j < size; ++j)
+        {
+          if (i != j)
+            {
+              if (e->v == edges[j]->u)
+                {
+                  printf ("%d: %d %d --\n", edges[j]->index,
+                          edges[j]->u->index, edges[j]->v->index);
+                  
+                  break;
+                }
+            }
+        }
+      
+      if (j == size)
+        {
+          printf ("**\n");
+          /* new path.. reset */
+        }
+    }
+}
+
+static int
+_edge_order_assignment (vertex_t *u, short *edges)
+{
+  int k, h = 0;
+
   for (k = 0; k < u->degree; ++k)
     {
       edge_t *e = u->edges[k];
       if (!edges[e->index])
         {
           vertex_t *v = edge_other (e, u);
+
+          edges[e->index] = e->order;
           if (implicit_hcount (u) > u->hcount)
-            e->order += implicit_hcount (v) - v->hcount;
-          edges[e->index] = 1;
-          _edge_order_assignment (v, vertices, edges);
+            {
+              h = implicit_hcount (v) - v->hcount;
+              if (h == 0)
+                {
+                  h = -1;
+                  continue;
+                }
+              
+              e->order += h;
+            }
+
+          h = _edge_order_assignment (v, edges);
+          if (h != 0)
+            {
+              /* backtracking... */
+              h = implicit_hcount (v) - v->hcount;
+              e->order += h;
+              if (h < 0)
+                {
+                  /* see where else this h can go */
+                  int i;
+                  for (i = 0; i < u->degree; ++i)
+                    {
+                      e = u->edges[i];
+                      if (!edges[e->index])
+                        h = _edge_order_assignment (u, edges);
+                    }
+                }
+              
+              return h;
+            }
         }
     }
+
+  if (h == 0 && implicit_hcount (u) != u->hcount)
+    {
+      h = -1;
+      /* handle limited charge */
+      switch (u->atom->atno)
+        {
+        case 8:
+          if (u->degree == 1 && u->hcount == 0)
+            {
+              --u->charge;
+              h = 0;
+            }
+          break;
+          
+        case 7:
+          if (u->degree == 4 && u->hcount == 0)
+            {
+              ++u->charge;
+              h = 0;
+            }
+          break;
+        }
+    }
+  
+  return h;
 }
+
+static void
+_edge_order_assignment2 (vertex_t *u, short *visited)
+{
+  int k, h = 0;
+  
+  if (implicit_hcount (u) > u->hcount)
+    {
+      printf ("+%d ", u->index);
+      for (k = 0; k < u->degree; ++k)
+        {
+          edge_t *e = u->edges[k];
+          if (!visited[e->index])
+            {
+              vertex_t *v = edge_other (e, u);
+              
+              visited[e->index] = 1;
+              _edge_order_assignment2 (v, visited);
+            }
+        }
+      printf ("\n");
+    }
+}
+
 
 static void
 edge_order_assignment (graph_t *g)
 {
   edge_t *e;
-  short *vertices = malloc (sizeof (short) * (g->nv+1));
-  short *edges = malloc (sizeof (short) * (g->ne+1));
-  int hcount, k = 0, h, i;
-  
-  do
+  short *visited = malloc (sizeof (short) * (g->ne+1));
+  int hcount, k = 0, i, q;
+
+  for (k = 0; k < g->nv; ++k)
     {
-      (void) memset (vertices, 0, sizeof (short) * (g->nv+1));
-      (void) memset (edges, 0, sizeof (short) * (g->ne+1));
-      for (e = g->E; e != 0; e = e->next)
-        e->order = 1;
-      
-      _edge_order_assignment (g->V[k], vertices, edges);
-      
-      hcount = 0;
-      for (i = 0; i < g->nv; ++i)
-        {
-          h = implicit_hcount (g->V[i]) - g->V[i]->hcount;
-          if (h == 1)
-            {
-              switch (g->V[i]->atom->atno)
-                {
-                case 8:
-                  if (g->V[i]->degree == 1)
-                    {
-                      --g->V[i]->charge;
-                      h = 0;
-                    }
-                  break;
-                  
-                case 7:
-                  if (g->V[i]->degree == 4)
-                    {
-                      ++g->V[i]->charge;
-                      h = 0;
-                    }
-                  break;
-                }
-            }
-          hcount += h;
-        }
-      printf ("V = %d => hcount = %d\n", g->V[k]->index, hcount);
-      ++k;
+      _edge_order_assignment (g->V[k], visited);
+      q = 0;
+      for (i = 1; i <= g->ne; ++i)
+        if (visited[i]) ++q;
+      if (q == g->ne)
+        break; /* we're done */
     }
-  while (hcount > 0 && k < g->nv);
-  
-  printf ("E[%d] = \n", g->ne);
-  for (e = g->E; e != 0; e = e->next)
-    { vertex_t *u = e->u, *v = e->v;
-      printf ("%d: %d %c %d\n", e->index, u->index,
-              e->order == 1 ? '-' : '=', v->index);
-    }
-  
+      
+  hcount = 0;
+  for (i = 0; i < g->nv; ++i)
+    hcount += implicit_hcount (g->V[i]) - g->V[i]->hcount;
+  printf ("V = %d => hcount = %d\n", g->V[k]->index, hcount);
+
+  edge_debug (g);
   if (hcount > 0)
     {
-      fprintf (stderr, "** Warning: something is rotten in the state of MD; "
-               "%d extra hydrogens left without a home! **\n", hcount);
+      fprintf (stderr, "** %d charge(s) detected! **\n", hcount);
     }
   
-  free (vertices);
-  free (edges);
+  free (visited);
 }
 
 static void
@@ -1182,6 +1770,7 @@ instrument_graph (graph_t *g)
   formula_t *f = g->formula;
   hlayer_t *h;
   vertex_t ***neighbors;
+  int *group;
 
   neighbors = malloc (sizeof (vertex_t **) * (g->nv+1));
   neighbors[0] = 0;
@@ -1195,7 +1784,7 @@ instrument_graph (graph_t *g)
         if (i != j && __A(i+1, j+1))
           ++d;
       neighbors[i+1] = malloc (d * sizeof (vertex_t *));
-      g->V[i] = create_vertex (i+1, d);
+      g->V[i] = create_vertex (g, i+1, d);
     }
 
   /* align the formula with the component; this doesn't seem to be a clean
@@ -1226,6 +1815,10 @@ instrument_graph (graph_t *g)
   if (f->element->atno == 1)
     f = f->next;
 
+  /* number of groups should never exceed number of atoms */
+  group = malloc (sizeof (int)* g->nv);
+  (void) memset (group, 0, sizeof (int)*g->nv);
+  
   /*
    * instrument vertices
    */
@@ -1246,9 +1839,22 @@ instrument_graph (graph_t *g)
           {
             if (h->group > 0)
               {
+#if 0
                 /* shared; ensure that only the largest index get the H */
                 if (h->next == 0 || h->next->group != h->group)
                   u->hcount = h->count;
+#else
+                if (group[h->group] == 0)
+                  {
+                    /* smallest index */
+                    hlayer_t *n = g->hlayer;
+                    while (n->group != h->group)
+                      n = n->next;
+                    u->hcount = n->count;
+                    
+                    group[h->group] = u->index;
+                  }
+#endif
               }
             else
               u->hcount = h->count;
@@ -1264,10 +1870,14 @@ instrument_graph (graph_t *g)
               /* don't include Hs */
               if (f->element->atno == 1)
                 f = f->next;
-              count = f->count;
+              
+              if (f != 0)
+                count = f->count;
             }
         }
     }
+
+  free (group);
 
   /* instrument edges */
   edge_closure (neighbors, g);
@@ -1302,7 +1912,7 @@ instrument_graph (graph_t *g)
   create_graph_W (neighbors, g);
 #endif
   
-  for (i = 1; i < g->nv; ++i)
+  for (i = 1; i <= g->nv; ++i)
     if (neighbors[i] != 0)
       free (neighbors[i]);
   free (neighbors);
