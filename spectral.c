@@ -1541,58 +1541,6 @@ edge_debug (const graph_t *g)
     }
 }
 
-static void
-edge_parity (edge_t **edges, int *q, vertex_t *u, short *visited)
-{
-  int k;
-  for (k = 0; k < u->degree; ++k)
-    {
-      edge_t *e = u->edges[k];
-      if (!visited[e->index])
-        {
-          vertex_t *v = edge_other (e, u);
-          if (implicit_hcount (u) > u->hcount
-              && implicit_hcount (v) > v->hcount)
-            {
-              edges[(*q)++] = e;
-            }
-          
-          visited[e->index] = 1;
-          edge_parity (edges, q, v, visited);
-        }
-    }
-}
-
-static void
-edge_parity_propagate (const edge_t **edges, int size)
-{
-  int i, j;
-  printf ("edge parity propagate...\n");
-  for (i = 0; i < size; ++i)
-    {
-      const edge_t *e = edges[i];
-      for (j = 0; j < size; ++j)
-        {
-          if (i != j)
-            {
-              if (e->v == edges[j]->u)
-                {
-                  printf ("%d: %d %d --\n", edges[j]->index,
-                          edges[j]->u->index, edges[j]->v->index);
-                  
-                  break;
-                }
-            }
-        }
-      
-      if (j == size)
-        {
-          printf ("**\n");
-          /* new path.. reset */
-        }
-    }
-}
-
 static int
 _edge_order_assignment (vertex_t *u, short *edges)
 {
@@ -1611,8 +1559,14 @@ _edge_order_assignment (vertex_t *u, short *edges)
               h = implicit_hcount (v) - v->hcount;
               if (h == 0)
                 {
-                  h = -1;
-                  continue;
+                  /* [N+](-*)(-*)(-*) */
+                  if (u->hcount == 0 && u->degree == 4)
+                    h = 0;
+                  else
+                    {
+                      h = -1;
+                      continue;
+                    }
                 }
               
               e->order += h;
@@ -1667,30 +1621,6 @@ _edge_order_assignment (vertex_t *u, short *edges)
   
   return h;
 }
-
-static void
-_edge_order_assignment2 (vertex_t *u, short *visited)
-{
-  int k, h = 0;
-  
-  if (implicit_hcount (u) > u->hcount)
-    {
-      printf ("+%d ", u->index);
-      for (k = 0; k < u->degree; ++k)
-        {
-          edge_t *e = u->edges[k];
-          if (!visited[e->index])
-            {
-              vertex_t *v = edge_other (e, u);
-              
-              visited[e->index] = 1;
-              _edge_order_assignment2 (v, visited);
-            }
-        }
-      printf ("\n");
-    }
-}
-
 
 static void
 edge_order_assignment (graph_t *g)
