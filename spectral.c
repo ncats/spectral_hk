@@ -40,7 +40,7 @@ for completeness sake. ****"
 
 typedef struct __formula_s {
   int index; /* this is not the same the component index */
-  int count;
+  short count;
   const element_t *element;
   struct __formula_s *next;
 } formula_t;
@@ -48,17 +48,20 @@ typedef struct __formula_s {
 typedef struct __hlayer_s {
   int index; /* component index */
   int atom; /* atom index */
-  int count; /* number of Hs */
-  int group; /* shared Hs if group > 1 */
+  short count; /* number of Hs */
+  short group; /* shared Hs if group > 1 */
   const element_t *element;
   struct __hlayer_s *next;
 } hlayer_t;
 
 typedef struct __vertex_s {
   int index;
-  int degree;
-  int hcount;
-  int charge;
+  short degree;
+  short charge;
+  
+  short hcount;
+  short hgroup; /* sharing group for h if != 0 */
+  
   const element_t *atom;
   struct __graph_s *graph;
   struct __edge_s **edges; /* edges[0..degree-1] */
@@ -66,7 +69,7 @@ typedef struct __vertex_s {
 
 typedef struct __edge_s {
   int index;
-  int order;
+  short order;
   vertex_t *u;
   vertex_t *v;
   struct __edge_s *next;
@@ -74,7 +77,7 @@ typedef struct __edge_s {
 
 typedef struct __graph_s {
   int index; /* component index */
-  int multiplier; /* multiplicity */
+  short multiplier; /* multiplicity */
   
 #ifdef __A
 # undef __A
@@ -872,9 +875,10 @@ create_vertex (graph_t *g, int index, int degree)
   vertex_t *v = malloc (sizeof (vertex_t) + sizeof (edge_t*)*degree);
   v->index = index;
   v->degree = degree;
-  v->hcount = 0;
   v->charge = 0;
   v->atom = 0;
+  v->hcount = 0;
+  v->hgroup = 0;
   v->graph = g;  
   v->edges = (edge_t **)((char *)v + sizeof (vertex_t));
   (void) memset (v->edges, 0, degree*sizeof (edge_t *));
@@ -965,8 +969,8 @@ implicit_hcount (const vertex_t *u)
     case 9: v = 1 - v; break;
     case 14: v = 4 - v; break;
     case 16:
-      if (v <= 2) v = 2 - v;
-      /*else if (v <= 4) v = 4 - v;*/
+      if (u->degree <= 2) v = 2 - v;
+      else if (u->degree < 4) v = 4 - v;
       else v = 6 - v;
       break;
     case 17: v = 1 - v; break;
@@ -1554,12 +1558,13 @@ _edge_order_assignment (vertex_t *u, short *edges)
           vertex_t *v = edge_other (e, u);
 
           edges[e->index] = e->order;
-          if (implicit_hcount (u) > u->hcount)
+          /* not shared h in v */
+          if (implicit_hcount (u) > u->hcount && v->hgroup == 0)
             {
               h = implicit_hcount (v) - v->hcount;
               if (h == 0)
                 {
-                  /* [N+](-*)(-*)(-*) */
+                  /* *-[N+](-*)(-*)(-*) */
                   if (u->hcount == 0 && u->degree == 4)
                     h = 0;
                   else
@@ -1597,25 +1602,46 @@ _edge_order_assignment (vertex_t *u, short *edges)
 
   if (h == 0 && implicit_hcount (u) != u->hcount)
     {
-      h = -1;
-      /* handle limited charge */
-      switch (u->atom->atno)
+      /* see if any of the neighboring atom contains shared h that
+       * we can use
+       */
+      h = implicit_hcount (u) - u->hcount;
+      for (k = 0; k < u->degree; ++k)
         {
-        case 8:
-          if (u->degree == 1 && u->hcount == 0)
+          vertex_t *v = edge_other (u->edges[k], u);
+          if (v->hgroup > 0 && v->hcount == h)
             {
-              --u->charge;
+              /* found it */
+              u->edges[k]->order += h;
               h = 0;
+              break;
             }
-          break;
-          
-        case 7:
-          if (u->degree == 4 && u->hcount == 0)
+        }
+
+      /* if thing still isn't khosher, we try to see if it might be due
+       * to charge 
+       */
+      if (h != 0)
+        {
+          /* handle limited charge */
+          switch (u->atom->atno)
             {
-              ++u->charge;
-              h = 0;
+            case 8:
+              if (u->degree == 1 && u->hcount == 0)
+                {
+                  --u->charge;
+                  h = 0;
+                }
+              break;
+              
+            case 7:
+              if (u->degree == 4 && u->hcount == 0)
+                {
+                  ++u->charge;
+                  h = 0;
+                }
+              break;
             }
-          break;
         }
     }
   
@@ -1625,30 +1651,38 @@ _edge_order_assignment (vertex_t *u, short *edges)
 static void
 edge_order_assignment (graph_t *g)
 {
-  edge_t *e;
+  vertex_t *v;
+  hlayer_t *h;
   short *visited = malloc (sizeof (short) * (g->ne+1));
-  int hcount, k = 0, i, q;
+  int k = 0, i, q;
 
+  (void) memset (visited, 0, sizeof (short) * (g->ne+1));
   for (k = 0; k < g->nv; ++k)
     {
-      _edge_order_assignment (g->V[k], visited);
+      v = g->V[k];
+      _edge_order_assignment (v, visited);
+      
       q = 0;
       for (i = 1; i <= g->ne; ++i)
         if (visited[i]) ++q;
+
       if (q == g->ne)
         break; /* we're done */
     }
       
-  hcount = 0;
+  q = 0;
   for (i = 0; i < g->nv; ++i)
-    hcount += implicit_hcount (g->V[i]) - g->V[i]->hcount;
-  printf ("V = %d => hcount = %d\n", g->V[k]->index, hcount);
+    {
+      v = g->V[i];
+      q += implicit_hcount (v) - v->hcount;
+    }
+  printf ("V = %d => hcount = %d\n", g->V[k]->index, q);
 
   edge_debug (g);
-  if (hcount > 0)
-    {
-      fprintf (stderr, "** %d charge(s) detected! **\n", hcount);
-    }
+  if (q > 0)
+    fprintf (stderr, "** %d charge(s) detected! **\n", q);
+  else if (q < 0)
+    fprintf (stderr, "** %d tautomer(s) detected! **\n", -q);
   
   free (visited);
 }
@@ -1767,27 +1801,8 @@ instrument_graph (graph_t *g)
       for (h = g->hlayer; h != 0; h = h->next)
         if (h->atom == u->index)
           {
-            if (h->group > 0)
-              {
-#if 0
-                /* shared; ensure that only the largest index get the H */
-                if (h->next == 0 || h->next->group != h->group)
-                  u->hcount = h->count;
-#else
-                if (group[h->group] == 0)
-                  {
-                    /* smallest index */
-                    hlayer_t *n = g->hlayer;
-                    while (n->group != h->group)
-                      n = n->next;
-                    u->hcount = n->count;
-                    
-                    group[h->group] = u->index;
-                  }
-#endif
-              }
-            else
-              u->hcount = h->count;
+            u->hcount = h->count;
+            u->hgroup = h->group;
             
             break;
           }
