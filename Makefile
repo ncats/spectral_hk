@@ -11,7 +11,7 @@ DEBUG=-g #-DSPECTRAL_DEBUG
 ## shouldn't have to edit below
 ######################################################################
 TARGETS = libspectral.a spectral_hk$(SUFFIX) pi$(SUFFIX)
-OBJS = b32.o sha1.o jacobi.o spectral.o interval.o periodic.o
+OBJS = b32.o sha1.o jacobi.o spectral.o periodic.o inchi.o features.o ring.o
 CFLAGS= -Wall $(DEBUG)
 LIBS = -lm 
 
