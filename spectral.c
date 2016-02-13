@@ -448,7 +448,7 @@ spectral_inchi (spectral_t *sp, const char *inchi)
           sp->bsize = nv;
         }
 #ifdef SPECTRAL_DEBUG
-      printf ("## /c = %s\n", inchi_layer_c (sp->inchi));
+      printf ("## %d /c = %s\n", nv, inchi_layer_c (sp->inchi));
 #endif
       
       if (graph_spectrum (sp->spectrum, sp->fiedler, sp->inchi) < 0)

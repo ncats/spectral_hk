@@ -4,7 +4,7 @@ SUFFIX =
 CC = clang
 
 # uncomment to compile debug
-DEBUG=-g #-DSPECTRAL_DEBUG
+DEBUG=-g -DSPECTRAL_DEBUG
 #DEBUG=-O3
 
 ######################################################################

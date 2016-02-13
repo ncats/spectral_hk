@@ -34,6 +34,12 @@ typedef struct __vertex_s {
   short hcount;
   short hshare; /* number of shared h's (if any) for this group */
   short hgroup; /* sharing group for h if != 0 */
+
+#define FLAG_RING    0
+#define FLAG_HETERO  1
+#define FLAG_CHIRAL  2
+#define FLAG_QUERY   4
+  unsigned flags;
   
   inchi_t *graph;  
   const element_t *atom;
@@ -108,5 +114,7 @@ struct __inchi_s {
 extern vertex_t *_inchi_edge_other (const edge_t *e, const vertex_t *v);
 extern void bond_energy_length (const edge_t *e, double *d, double *r);
 extern int _inchi_ring_perception (inchi_t *g);
+extern void _inchi_vertex_set (vertex_t *v, unsigned flag);
+extern int _inchi_vertex_get (const vertex_t *v, unsigned flag);
 
 #endif /* !__inchi_private_h__ */

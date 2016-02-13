@@ -26,12 +26,14 @@ shortest_path_dfs (path_t **path, edge_t **edges, int *ne,
     {
       /* new path */
       path_t *p = path_create (edges, *ne);
+#ifdef INCHI_DEBUG
       { int i;
         printf ("## shortest path...%d", *ne);
         for (i = 0; i < *ne; ++i)
           printf (" [%d,%d]", edges[i]->u->index, edges[i]->v->index);
         printf ("\n");
       }
+#endif
       p->prev = *path;
       if (*path != 0)
         (*path)->next = p;
@@ -50,11 +52,17 @@ shortest_path_dfs (path_t **path, edge_t **edges, int *ne,
           if (cost[s+xu->index] + cost[xu->index*n+v->index]
               <= cost[s+v->index] && !visited[xu->index])
             {
+#ifdef INCHI_DEBUG
               printf (" + %d: [%d,%d]\n", *ne, e->u->index, e->v->index);
+#endif
+              
               edges[(*ne)++] = e; /* push */
               shortest_path_dfs (path, edges, ne, visited, start, xu, v, cost);
+              
+#ifdef INCHI_DEBUG
               e = edges[*ne-1];
               printf (" - %d: [%d,%d]\n", *ne-1, e->u->index, e->v->index);
+#endif
               edges[--(*ne)] = 0; /* pop */
             }
         }
@@ -72,7 +80,9 @@ shortest_paths (short *visited, const vertex_t *u,
   edge_t **edges = malloc (sizeof (edge_t *) * ne);
   (void) memset (edges, 0, sizeof (edge_t *) * ne);
 
+#ifdef INCHI_DEBUG
   printf ("** %d - %d\n", u->index, v->index);
+#endif
   ne = 0;
   shortest_path_dfs (&path, edges, &ne, visited, u, u, v, cost);
 
@@ -99,12 +109,14 @@ all_path_dfs (path_t **path, edge_t **edges, int *ne,
     {
       /* new path */
       path_t *p = path_create (edges, *ne);
+#ifdef INCHI_DEBUG
       { int i;
         printf ("## all path...%d", *ne);
         for (i = 0; i < *ne; ++i)
           printf (" [%d,%d]", edges[i]->u->index, edges[i]->v->index);
         printf ("\n");
       }
+#endif
       
       p->prev = *path;
       if (*path != 0)
@@ -123,7 +135,7 @@ all_path_dfs (path_t **path, edge_t **edges, int *ne,
             {
               edges[(*ne)++] = e; /* push */
               all_path_dfs (path, edges, ne, visited, start, xu, v);
-              edges[(*ne)--] = 0; /* pop */
+              edges[(--*ne)] = 0; /* pop */
             }
         }
       visited[u->index] = 0;
@@ -174,21 +186,46 @@ label_vertices (short label, short *vertex, const path_t *path)
   return ov;
 }
 
+/* determine whether q is a subpath of p */
 static int
-paths_overlap_at_vertex (const path_t *p, const path_t *q, const vertex_t *u)
+path_contains_path (const path_t *p, const path_t *q)
 {
-  int n = u->graph->nv+1, ov = 0;
-  short *vertices = malloc (sizeof (short)*n);
-  (void) memset (vertices, 0, sizeof (short) * n);
-  if (0 == label_vertices (1, vertices, p)
-      && 1 == label_vertices (2, vertices, q) /* one vertex overlap */
-      && 2 == vertices[u->index]) /* and it's u */
+  int i, j;
+  const edge_t *e;
+
+  if (q->ne > p->ne) return 0;
+
+  /* sigh.. */
+  for (i = 0; i < q->ne; ++i)
     {
-      ov = 1;
+      e = q->edges[i];
+      for (j = 0; j < p->ne; ++j)
+        if (e->index == p->edges[j]->index)
+          break;
+      
+      if (j == p->ne)
+        return 0;
     }
-  free (vertices);
-  
-  return ov;
+  return 1;
+}
+
+static int
+path_contains_edge (const path_t *p, const edge_t *e)
+{
+  int i;
+  for (i = 0; i < p->ne; ++i)
+    if (e->index == p->edges[i]->index)
+      return 1;
+  return 0;
+}
+
+static int
+paths_overlap_at_vertex (short *vertices, const path_t *p,
+                         const path_t *q, const vertex_t *u)
+{
+  return (0 == label_vertices (1, vertices, p)
+          && 1 == label_vertices (2, vertices, q) /* one vertex overlap */
+          && 2 == vertices[u->index]); /* and it's u */
 }
 
 int
@@ -200,10 +237,8 @@ _inchi_ring_perception (inchi_t *g)
   int n = g->nv+1, i, j, k;
   int *cost = malloc (n*n*sizeof (int));
   short *visited = malloc (n * sizeof (short));
-  short *exclude = malloc (n * sizeof (short));
 
   (void) memset (cost, 0, sizeof (int)*n*n);
-  (void) memset (exclude, 0, sizeof (short) * n);
   
   for (i = 0; i < n; ++i)
     {
@@ -232,7 +267,7 @@ _inchi_ring_perception (inchi_t *g)
         {
           path_t *p1;
           
-          (void) memcpy (visited, exclude, sizeof (short) * n);
+          (void) memset (visited, 0, sizeof (short) * n);
           p1 = shortest_paths (visited, u, e->u, cost);
           for (p = p1; p != 0;)
             {
@@ -242,40 +277,65 @@ _inchi_ring_perception (inchi_t *g)
               p2 = all_paths (visited, u, e->v);
               for (q = p2; q != 0;)
                 {
-                  /* see if p & q overlaps at u */
-                  if (paths_overlap_at_vertex (p, q, u))
+                  /* see if p & q overlap at u */
+                  if (paths_overlap_at_vertex (visited, p, q, u))
                     {
-                      path_t *ring = malloc (sizeof (path_t)
-                                             + p->ne*sizeof (edge_t *)
-                                             + q->ne*sizeof (edge_t *)
-                                             + sizeof (edge_t *));
-                      ring->ne = p->ne + q->ne + 1;
-                      ring->edges =
-                        (edge_t **)((unsigned char *)ring + sizeof (path_t));
-                      
-                      for (j = 0; j < p->ne; ++j)
-                        ring->edges[j] = p->edges[j];
-                      for (k = 0; k < q->ne; ++k, ++j)
-                        ring->edges[j] = q->edges[k];
-                      
-                      ring->edges[j] = e;
-                      ring->next = 0;
-                      ring->prev = g->R;
-                      if (g->R != 0)
-                        g->R->next = ring;
-                      g->R = ring;
-                      
-                      printf (" ** => new ring size %d...", ring->ne);
-                      for (j = 0; j < ring->ne; ++j)
+                      int found = 0;
+                      path_t *r = g->R;
+                      while (r != 0)
                         {
-                          exclude[ring->edges[j]->u->index] = 1;
-                          exclude[ring->edges[j]->v->index] = 1;
-                          printf (" [%d,%d]", ring->edges[j]->u->index,
-                                  ring->edges[j]->v->index);
+                          if (path_contains_path (r, p)
+                              && path_contains_path (r, q)
+                              && path_contains_edge (r, e))
+                            {
+                              found = 1;
+                              break;
+                            }
+                          r = r->prev;
                         }
-                      printf ("\n");
-                      ++g->nr;
-                    }
+
+                      if (!found)
+                        {
+                          int size = p->ne + q->ne + 1;
+                          path_t *ring =
+                            malloc (sizeof (path_t) + size*sizeof (edge_t *));
+
+                          ring->ne = size;
+                          ring->edges =
+                            (edge_t **)((unsigned char *)ring
+                                        + sizeof (path_t));
+                      
+                          for (j = 0; j < p->ne; ++j)
+                            ring->edges[j] = p->edges[j];
+                          for (k = 0; k < q->ne; ++k, ++j)
+                            ring->edges[j] = q->edges[k];
+                          
+                          ring->edges[j] = e;
+                          ring->next = 0;
+                          ring->prev = g->R;
+                          if (g->R != 0)
+                            g->R->next = ring;
+                          g->R = ring;
+                          
+#ifdef INCHI_DEBUG
+                          printf (" ** => new ring size %d...", ring->ne);
+#endif
+                          for (j = 0; j < ring->ne; ++j)
+                            {
+                              _inchi_vertex_set (ring->edges[j]->u, FLAG_RING);
+                              _inchi_vertex_set (ring->edges[j]->v, FLAG_RING);
+                              
+#ifdef INCHI_DEBUG
+                              printf (" [%d,%d]", ring->edges[j]->u->index,
+                                      ring->edges[j]->v->index);
+#endif
+                            }
+#ifdef INCHI_DEBUG
+                          printf ("\n");
+#endif
+                          ++g->nr;
+                        } /* !found */
+                    } /* paths overlap */
                   
                   next = q->next;
                   free (q);
@@ -294,7 +354,6 @@ _inchi_ring_perception (inchi_t *g)
   
   free (cost);
   free (visited);
-  free (exclude);
   
-  return 0;
+  return g->nr;
 }

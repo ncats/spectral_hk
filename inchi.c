@@ -394,8 +394,9 @@ create_vertex (inchi_t *g, int index, int degree)
   v->hcount = 0;
   v->hgroup = 0;
   v->hshare = 0;
+  v->flags = 0;
   v->graph = g;  
-  v->edges = (edge_t **)((char *)v + sizeof (vertex_t));
+  v->edges = (edge_t **)((unsigned char *)v + sizeof (vertex_t));
   (void) memset (v->edges, 0, degree*sizeof (edge_t *));
   return v;
 }
@@ -435,6 +436,19 @@ vertex_t *
 _inchi_edge_other (const edge_t *e, const vertex_t *v)
 {
   return e->u == v ? e->v : e->u;
+}
+
+void
+_inchi_vertex_set (vertex_t *v, unsigned flag)
+{
+  v->flags |= 1<<flag;
+}
+
+int
+_inchi_vertex_get (const vertex_t *v, unsigned flag)
+{
+  unsigned mask = 1<<flag;
+  return (v->flags & mask) == mask;
 }
 
 static int
@@ -642,30 +656,31 @@ _edge_order_assignment (vertex_t *u, short *edges)
        */
       if (u->hgroup == 0)
         {
-          vertex_t *nb[10] = {0};
-
-          assert (u->degree < 10);
-          for (k = 0; k < u->degree; ++k)
-            nb[k] = _inchi_edge_other (u->edges[k], u);
-          
-          qsort (nb, u->degree, sizeof (nb[0]), sort_vertex);
+          vertex_t *v, *vb = 0;
           
           h = implicit_hcount (u) - u->hcount;
           for (k = 0; k < u->degree; ++k)
             {
-              vertex_t *v = nb[k];
-              printf ("%d: %d %d %d/%d %d\n", u->index, v->index,
-                      v->hgroup, v->hcount, v->hshare, v->atom->atno);
-              if (v->hshare >= h)
-                {
-                  edge_t *e = vertex_get_edge (u, v);
-                  if (e != 0)
-                    {
-                      e->order += h;
-                      h = 0;
-                    }
-                  break;
-                }
+              v = _inchi_edge_other (u->edges[k], u);
+              if (v->hshare >= h
+                  && (vb == 0
+                      || v->atom->atno > vb->atom->atno
+                      || (v->atom->atno == vb->atom->atno
+                          && _inchi_vertex_get (v, FLAG_RING)
+                          && !_inchi_vertex_get (vb, FLAG_RING))))
+                vb = v;
+            }
+
+          if (vb != 0)
+            {
+              edge_t *e = vertex_get_edge (u, vb);
+              h = implicit_hcount (u) - u->hcount;
+              printf ("%d: %d %d %d/%d %d\n", u->index, vb->index,
+                      vb->hgroup, vb->hcount, vb->hshare, vb->atom->atno);
+              e->order += h;
+              vb->hcount = h;
+              vb->hshare = 0;
+              h = 0;
             }
         }
 
@@ -703,7 +718,6 @@ static void
 edge_order_assignment (inchi_t *g)
 {
   vertex_t *v;
-  hlayer_t *h;
   short *visited = malloc (sizeof (short) * (g->ne+1));
   int k = 0, i, q;
 
@@ -1113,7 +1127,7 @@ inchi_parse (inchi_t *g, const char *inchi)
 
   instrument_graph (g);
   
-  return n;
+  return g->nv;
 }
 
 int
