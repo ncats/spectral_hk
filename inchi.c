@@ -23,12 +23,15 @@ parse_inchi_graph (int **pG, size_t *psize, char *inchi, char errmsg[])
     size = *psize;
 
   G = *pG;
+  (void) memset (G, 0, size*size*sizeof (int));
+  /*
   { int i = 0, j;
     for (; i < size; ++i)
       for (j = 0; j < size; ++j)
         G[i*size+j] = 0;
   }
-
+  */
+  
   ppv = pv = malloc (sizeof (int)*size);
   for (pc = 0; ptr < end; ++ptr)
     {
@@ -334,7 +337,7 @@ parse_layer_h (hlayer_t **hlayer, char *err, const char *inchi)
           break;
 
         case '(':
-          shared ^= 1; /* toggel parity */
+          shared ^= 1; /* toggle parity */
           ++group;
           ++p;
           break;
@@ -548,6 +551,23 @@ vertex_get_edge (vertex_t *u, vertex_t *v)
   return 0;
 }
 
+static int
+compare_edge (const void *p1, const void *p2)
+{
+  const edge_t *e1 = *(edge_t * const *)p1;
+  const edge_t *e2 = *(edge_t * const *)p2;
+  if (e1->u == e2->u)
+    return e1->v->index - e2->v->index;
+  if (e1->u == e2->v)
+    return e1->v->index - e2->u->index;
+  if (e1->v == e2->u)
+    return e1->u->index - e2->v->index;
+  if (e1->v == e2->v)
+    return e1->u->index - e2->u->index;
+  /* shouldn't ever get here! */
+  return 0;
+}
+
 static void
 edge_closure (vertex_t **const *neighbors, inchi_t *g)
 {
@@ -566,6 +586,15 @@ edge_closure (vertex_t **const *neighbors, inchi_t *g)
       vertex_add_edge (v, edge);
       edge = edge->next;
     }
+
+  /* make sure the edges are sorted based on the neigbhor index */
+  { int i;
+    for (i = 0; i < g->nv; ++i)
+      {
+        vertex_t *u = g->V[i];
+        qsort (u->edges, u->degree, sizeof (u->edges[0]), compare_edge);
+      }
+  }
 }
 
 static void
@@ -627,7 +656,7 @@ _edge_order_assignment (vertex_t *u, short *edges)
             }
 
           h = _edge_order_assignment (v, edges);
-          if (h != 0)
+          if (h != 0 && implicit_hcount (u) > u->hcount)
             {
               /* backtracking... */
               h = implicit_hcount (v) - v->hcount;
@@ -665,9 +694,9 @@ _edge_order_assignment (vertex_t *u, short *edges)
               if (v->hshare >= h
                   && (vb == 0
                       || v->atom->atno > vb->atom->atno
-                      || (v->atom->atno == vb->atom->atno
+                      /*|| (v->atom->atno == vb->atom->atno
                           && _inchi_vertex_get (v, FLAG_RING)
-                          && !_inchi_vertex_get (vb, FLAG_RING))))
+                          && !_inchi_vertex_get (vb, FLAG_RING))*/))
                 vb = v;
             }
 
@@ -719,34 +748,54 @@ edge_order_assignment (inchi_t *g)
 {
   vertex_t *v;
   short *visited = malloc (sizeof (short) * (g->ne+1));
-  int k = 0, i, q;
+  short *order = malloc (sizeof (short) * (g->ne+1));
+  int k = 0, i, q, minq;
 
-  (void) memset (visited, 0, sizeof (short) * (g->ne+1));
+  minq = g->ne;
+  (void) memset (order, 0, sizeof (short)*(g->ne+1));
   for (k = 0; k < g->nv; ++k)
     {
       v = g->V[k];
+      (void) memset (visited, 0, sizeof (short) * (g->ne+1));      
       _edge_order_assignment (v, visited);
-      
+
+      printf ("V = %d => ", v->index);      
       q = 0;
-      for (i = 1; i <= g->ne; ++i)
-        if (visited[i]) ++q;
-
-      if (q == g->ne)
-        break; /* we're done */
-    }
+      for (i = 0; i < g->nv; ++i)
+        {
+          v = g->V[i];
+          q += implicit_hcount (v) - v->hcount;
+        }
+      printf ("%d\n", q);
       
-  q = 0;
-  for (i = 0; i < g->nv; ++i)
-    {
-      v = g->V[i];
-      q += implicit_hcount (v) - v->hcount;
+      edge_debug (g);
+      if (q > 0)
+        fprintf (stderr, "** %d charge/tautomer(s) detected! **\n", q);
+      
+      if (q < minq)
+        {
+          edge_t *e = g->E;
+          for (; e != 0; e = e->next)
+            {
+              order[e->index] = e->order;
+              e->order = 1;
+            }
+          minq = q;
+          printf (" ** min q\n");
+        }
+      else
+        { edge_t *e = g->E;
+          for (; e != 0; e = e->next)
+            e->order = 1;
+        }
     }
-  printf ("V = %d => hcount = %d\n", g->V[k]->index, q);
 
-  edge_debug (g);
-  if (q > 0)
-    fprintf (stderr, "** %d charge/tautomer(s) detected! **\n", q);
-  
+  { edge_t *e = g->E;
+    for (; e != 0; e = e->next)
+      e->order = order[e->index];
+  }
+
+  free (order);
   free (visited);
 }
 
@@ -835,10 +884,12 @@ instrument_graph (inchi_t *g)
   if (count != g->nv)
     fprintf (stderr, "** Formula misaligned with component: "
              "expecting %d atoms but got %d! **\n", g->nv, count);
-  
+
+#ifdef SPECTRAL_DEBUG
   printf ("graph G for component %d/%d => formula %d\n",
             g->index, g->multiplier, f->index);
-    
+#endif
+  
   if (f->element->atno == 1)
     f = f->next;
 
@@ -894,6 +945,8 @@ instrument_graph (inchi_t *g)
   edge_closure (neighbors, g);
 
   _inchi_ring_perception (g);
+  
+#if 0
   { path_t *r = g->R;
     i = j = 0;
     printf ("@@ %d ring(s)...\n", g->nr);
@@ -932,6 +985,7 @@ instrument_graph (inchi_t *g)
         }
         printf ("\n");
     }
+#endif
   
 #if 0
   create_graph_L (neighbors, g);
@@ -959,11 +1013,8 @@ static void
 inchi_destroy (inchi_t *g)
 {
   if (g->A != 0)
-    {
-      free (g->A);
-      g->A = 0;
-    }
-  
+    free (g->A);
+
   if (g->V != 0)
     {
       int i;
@@ -974,16 +1025,10 @@ inchi_destroy (inchi_t *g)
     }
   
   if (g->L != 0)
-    {
-      free (g->L);
-      g->L = 0;
-    }
+    free (g->L);
 
   if (g->W != 0)
-    {
-      free (g->W);
-      g->W = 0;
-    }
+    free (g->W);
 
   if (g->R != 0)
     {
@@ -994,23 +1039,16 @@ inchi_destroy (inchi_t *g)
           free (p);
           p = n;
         }
-      g->R = 0;
     }
 
   if (g->inchi_c != 0)
-    {
-      free (g->inchi_c);
-      g->inchi_c = 0;
-    }
+    free (g->inchi_c);
   
   destroy_edge (g->E);
-  g->E = 0;
-  
   destroy_formula (g->formula);
-  g->formula = 0;
-  
   destroy_hlayer (g->hlayer);
-  g->hlayer = 0;
+
+  (void) memset (g, 0, sizeof (*g));
 }
 
 void
@@ -1048,6 +1086,7 @@ inchi_parse (inchi_t *g, const char *inchi)
 
   /* parse formula */
   n = parse_formula (&g->formula, g->errmsg, inchi);
+#ifdef SPECTRAL_DEBUG
   { formula_t *formula = g->formula;
     printf ("formula: %d\n", n);
     while (formula != 0)
@@ -1057,9 +1096,11 @@ inchi_parse (inchi_t *g, const char *inchi)
         formula = formula->next;
       }
   }
+#endif
   
   /* parse h layer */
   n = parse_layer_h (&g->hlayer, g->errmsg, inchi);
+#ifdef SPECTRAL_DEBUG
   { hlayer_t *h = g->hlayer;
     printf ("/h layer...%d\n", n);
     while (h != 0)
@@ -1068,7 +1109,8 @@ inchi_parse (inchi_t *g, const char *inchi)
         h = h->next;
       }
   }
-
+#endif
+  
   ptr = start + 2; /* skip over /c */
   for (end = ptr; *end != '/' && !isspace (*end) && *end != '\0'; ++end)
     ;

@@ -4,13 +4,13 @@ SUFFIX =
 CC = clang
 
 # uncomment to compile debug
-DEBUG=-g -DSPECTRAL_DEBUG
+DEBUG=-g #-DSPECTRAL_DEBUG
 #DEBUG=-O3
 
 ######################################################################
 ## shouldn't have to edit below
 ######################################################################
-TARGETS = libspectral.a spectral_hk$(SUFFIX) pi$(SUFFIX)
+TARGETS = libspectral.a spectral_hk$(SUFFIX)
 OBJS = b32.o sha1.o jacobi.o spectral.o periodic.o inchi.o features.o ring.o
 CFLAGS= -Wall $(DEBUG)
 LIBS = -lm 

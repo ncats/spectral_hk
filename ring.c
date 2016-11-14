@@ -135,7 +135,7 @@ all_path_dfs (path_t **path, edge_t **edges, int *ne,
             {
               edges[(*ne)++] = e; /* push */
               all_path_dfs (path, edges, ne, visited, start, xu, v);
-              edges[(--*ne)] = 0; /* pop */
+              edges[--(*ne)] = 0; /* pop */
             }
         }
       visited[u->index] = 0;

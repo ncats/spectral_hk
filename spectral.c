@@ -380,15 +380,22 @@ graph_spectrum (float *spectrum, float *fiedler, const inchi_t *g)
 #ifdef SPECTRAL_DEBUG
   printf ("G = \n");
   for (i = 0; i < nv; ++i)
-    printf (" % 4d", i+1);
-  printf ("\n");
+    {
+      int j;
+      for (j = 0; j < nv; ++j)
+        printf ("%s%.1f", j==0?"":"&", a[i][j]);
+      printf (" \\\\\n");
+    }
+
+  printf ("[");
   for (i = 0; i < nv; ++i)
     {
       int j;
       for (j = 0; j < nv; ++j)
-        printf (" % 4.1f", a[i][j]);
-      printf (" :%3d\n", i+1);
+        printf (" %.5f", a[i][j]);
+      printf (";\n");
     }
+  printf ("]\n");
 #endif
 
   err = jacobi (a, nv, d, evec);
