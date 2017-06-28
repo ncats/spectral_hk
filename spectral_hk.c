@@ -69,15 +69,18 @@ main (int argc, char *argv[])
                 ;
               *tok = '\0';
                     
-              (void) fprintf (outfp, "%s\t%s\t", hk, buffer);
               { size_t i, size = spectral_size (spectral);
                 const float *v = spectral_spectrum (spectral);
+                
+                (void) fprintf (outfp, "%s\t%s\t%ld\t", hk, buffer, size);
                 for (i = 0; i < size; ++i)
                   {
                     (void) fprintf (outfp, "%.5f", v[i]);
                     if (i+1 < size)
                       (void) fprintf (outfp, ",");
                   }
+                
+#ifdef FIEDLER_VECTOR
                 (void) fprintf (outfp, "\t");
                 v = spectral_fiedler (spectral);
                 for (i = 0; i < size; ++i)
@@ -86,6 +89,7 @@ main (int argc, char *argv[])
                     if (i+1 < size)
                       (void) fprintf (outfp, ",");
                   }
+#endif          
                 (void) fprintf (outfp, "\n");
               }
             }

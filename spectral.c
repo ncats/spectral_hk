@@ -56,6 +56,7 @@ for completeness sake. ****"
 struct __spectral_s 
 {
   size_t bsize; /* buffer size of spectrum */
+  size_t size; /* actual size of spectrum! */
   float *spectrum; /* spectrum buffer */
   float *fiedler; /* fiedler vector */
   sha1_t *sha1; /* sha1 hash */
@@ -454,6 +455,11 @@ spectral_inchi (spectral_t *sp, const char *inchi)
           sp->fiedler = realloc (sp->fiedler, nv*sizeof (float));
           sp->bsize = nv;
         }
+      /* make sure the elements are 0s */
+      (void) memset (sp->spectrum, 0, sp->bsize*sizeof (float));
+      (void) memset (sp->fiedler, 0, sp->bsize*sizeof (float));
+      sp->size = nv;
+      
 #ifdef SPECTRAL_DEBUG
       printf ("## %d /c = %s\n", nv, inchi_layer_c (sp->inchi));
 #endif
@@ -520,7 +526,7 @@ spectral_fiedler (const spectral_t *sp)
 size_t
 spectral_size (const spectral_t *sp)
 {
-  return sp->bsize;
+  return sp->size;
 }
 
 const char *
