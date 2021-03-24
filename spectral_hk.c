@@ -6,8 +6,49 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <math.h>
 #include "spectral.h"
 
+typedef struct eigenstats_s {
+  double sq_power;
+  double mean_sq_power;
+  double mean;
+  double var;
+  double median;
+  double skewness;
+  double kurtosis;
+} eigenstats_t;
+
+/*
+ * s is sorted
+ */
+static void calc_stats (eigenstats_t *stats, const float *s, size_t len)
+{
+  size_t i;
+  double v;
+  (void) memset (stats, 0, sizeof (*stats));
+  for (i = 0; i < len; ++i)
+    {
+      stats->mean += s[i];
+      stats->sq_power += s[i]* s[i];
+    }
+  stats->mean /= len; /* always 1 for normalized laplacian */
+  stats->mean_sq_power = stats->sq_power / len;
+  if (len % 2 == 0)
+    stats->median = (s[len/2-1] + s[len/2])/2.;
+  else
+    stats->median = s[len/2];
+  /* second pass */
+  for (i = 0; i < len; ++i)
+    {
+      v = s[i] - stats->mean;
+      stats->var += v * v;
+      stats->skewness += v*v*v;
+    }
+  v = stats->skewness;
+  stats->skewness = (v/len) / pow(stats->var/(len-1.0), 1.5);
+  stats->var /= len;
+}
 
 int
 main (int argc, char *argv[])
@@ -85,11 +126,23 @@ main (int argc, char *argv[])
                 v = spectral_fiedler (spectral);
                 for (i = 0; i < size; ++i)
                   {
-                    (void) fprintf (outfp, "%.5f", v[i]);
+                    (void) fprintf (outfp, "%.5e", v[i]);
                     if (i+1 < size)
                       (void) fprintf (outfp, ",");
                   }
-#endif          
+#endif
+#if 0                
+                (void) fprintf (outfp, "\t");           
+                { eigenstats_t stats;
+                  calc_stats (&stats, spectral_spectrum (spectral), size);
+                  (void) fprintf (outfp, "%.5f,", stats.sq_power);
+                  (void) fprintf (outfp, "%.5f,", stats.mean_sq_power);
+                  (void) fprintf (outfp, "%.5f,", stats.mean);
+                  (void) fprintf (outfp, "%.5f,", stats.var);
+                  (void) fprintf (outfp, "%.5f,", stats.median);
+                  (void) fprintf (outfp, "%.5e", stats.skewness);
+                }
+#endif
                 (void) fprintf (outfp, "\n");
               }
             }

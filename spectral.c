@@ -208,6 +208,10 @@ graph_spectrum (float *spectrum, float *fiedler, const inchi_t *g)
   gsl_matrix *V = gsl_matrix_alloc (nv, nv);
   gsl_vector *L = gsl_vector_alloc (nv);
 
+#ifdef SPECTRAL_DEBUG
+  gsl_matrix *D = gsl_matrix_alloc (nv, nv);
+#endif
+  
   /* 
    * normalized laplacian matrix
    */
@@ -220,6 +224,13 @@ graph_spectrum (float *spectrum, float *fiedler, const inchi_t *g)
           {
             v = __get_edge (i+1, j+1);
             d[i] += v;
+#ifdef SPECTRAL_DEBUG
+            if (v)
+              {
+                gsl_matrix_set (D, i, j, 1.);
+                gsl_matrix_set (D, j, i, 1.);
+              }
+#endif
           }
 
       gsl_matrix_set (A, i, i, 1);
@@ -242,6 +253,16 @@ graph_spectrum (float *spectrum, float *fiedler, const inchi_t *g)
       printf ("\n");
     }
 #else
+  printf ("A = [");
+  for (i = 0; i < nv; ++i)
+    {
+      for (j = 0; j < nv; ++j)
+        printf (" %-2.0f", gsl_matrix_get (D, i, j));
+      printf (";\n");
+    }  
+  printf ("];\n");
+  gsl_matrix_free (D);
+  
   printf ("G = [");
   for (i = 0; i < nv; ++i)
     {
@@ -249,7 +270,7 @@ graph_spectrum (float *spectrum, float *fiedler, const inchi_t *g)
         printf (" %-4.5f", gsl_matrix_get (A, i, j));
       printf (";\n");
     }
-  printf ("]\n");
+  printf ("];\n");
 #endif
 #endif
   
@@ -260,20 +281,35 @@ graph_spectrum (float *spectrum, float *fiedler, const inchi_t *g)
   while (i < nv && gsl_vector_get (L, ++i) < EPS)
     ;
 #ifdef SPECTRAL_DEBUG  
-  printf ("Eigenvector of the second smallest eigenvalue (%d: %.5f):\n",
+  printf ("Eigenvector of the smallest, non-zero eigenvalue (%d: %.5f):\n",
           i, gsl_vector_get (L, i));
 #endif
-  
-  { gsl_vector_view ev = gsl_matrix_column (V, i);
+
+#ifdef SPECTRAL_DEBUG
+  { gsl_vector_view ev1 = gsl_matrix_column (V, i);
+    gsl_vector_view ev2 = gsl_matrix_column (V, i+1);
+    gsl_vector_view ev3 = gsl_matrix_column (V, i+2);    
     for (i = 0; i < nv; ++i)
       {
-#ifdef SPECTRAL_DEBUG   
-        printf ("% 3d: % 11.10f\n", i, gsl_vector_get (&ev.vector, i));
-#endif
-        fiedler[i] = gsl_vector_get (&ev.vector, i);
+        printf ("% 3d: % 11.10f\n", i, gsl_vector_get (&ev1.vector, i));
+        fiedler[i] = gsl_vector_get (&ev1.vector, i);
       }
-  }
 
+    printf ("Eigenvectors of next two smallest eigenvalues\n");
+    printf ("v = [\n");
+    for (i = 0; i < nv; ++i)
+      {
+        printf ("%.10f %.10f;\n", gsl_vector_get (&ev2.vector, i),
+                gsl_vector_get (&ev3.vector, i));
+      }
+    printf ("];\n");
+  }
+#else
+  { gsl_vector_view ev = gsl_matrix_column (V, i);
+    for (i = 0; i < nv; ++i)
+        fiedler[i] = gsl_vector_get (&ev.vector, i);
+  }
+#endif
   
   for (i = 0; i < nv; ++i)
     spectrum[i] = gsl_vector_get (L, i);

@@ -1,9 +1,10 @@
 ##
 SUFFIX = _gsl
 CC = gcc
+OPTS =
 
 # uncomment to compile debug
-DEBUG=-g #-DSPECTRAL_DEBUG
+DEBUG=-g -DFIEDLER_VECTOR #-DSPECTRAL_DEBUG
 #DEBUG=-O3
 
 # uncomment to compile with gsl
@@ -20,7 +21,7 @@ GSLLIBS=-L/opt/local/lib -lgsl -lgslcblas ## macports
 ######################################################################
 TARGETS = libspectral.a spectral_hk$(SUFFIX)
 OBJS = b32.o sha1.o jacobi.o spectral.o periodic.o inchi.o features.o ring.o
-CFLAGS= -Wall $(GSLFLAGS) $(DEBUG)
+CFLAGS= -Wall $(GSLFLAGS) $(DEBUG) $(OPTS)
 LIBS = -lm $(GSLLIBS)
 
 .c.o: $(OBJS)

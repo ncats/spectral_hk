@@ -11,7 +11,7 @@ typedef struct __element_s {
   int atno;
   double mass;
   double eneg; /* electronegativity */
-  double eaff; /* electron affinity */
+  double eaff; /* electron affinity (eV) */
   double ione; /* ionization energy */
 } element_t;
 

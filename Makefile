@@ -2,9 +2,10 @@
 ## The bundled eigensolver is really for demonstration only!
 SUFFIX =
 CC = clang
+OPTS = 
 
 # uncomment to compile debug
-DEBUG=-g #-DSPECTRAL_DEBUG
+DEBUG=-g -DFIEDLER_VECTOR #-DSPECTRAL_DEBUG
 #DEBUG=-O3
 
 ######################################################################
@@ -12,7 +13,7 @@ DEBUG=-g #-DSPECTRAL_DEBUG
 ######################################################################
 TARGETS = libspectral.a spectral_hk$(SUFFIX)
 OBJS = b32.o sha1.o jacobi.o spectral.o periodic.o inchi.o features.o ring.o
-CFLAGS= -Wall $(DEBUG)
+CFLAGS= -Wall $(DEBUG) $(OPTS)
 LIBS = -lm 
 
 .c.o: $(OBJS)

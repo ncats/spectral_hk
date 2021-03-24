@@ -21,7 +21,7 @@ extern int spectral_ratio (double *ratio, spectral_t *, const char *inchi);
 extern size_t spectral_size (const spectral_t *);
 extern const float *spectral_spectrum (const spectral_t *);
 extern const float *spectral_fiedler (const spectral_t *);
-  
+extern const float *spectral_vector (const spectral_t *, int);
 #ifdef __cplusplus
 }
 #endif

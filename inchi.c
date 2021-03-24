@@ -944,7 +944,7 @@ instrument_graph (inchi_t *g)
   /* instrument edges */
   edge_closure (neighbors, g);
 
-  _inchi_ring_perception (g);
+  //_inchi_ring_perception (g);
   
 #if 0
   { path_t *r = g->R;
